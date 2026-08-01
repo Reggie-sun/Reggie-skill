@@ -1,0 +1,21 @@
+id,should_trigger,prompt,expected_mode
+T01,true,把当前仓库写成简历项目,Repository Audit
+T02,true,从代码里提炼我的项目贡献,Repository Audit
+T03,true,根据这个项目生成中文简历经历,Repository Audit
+T04,true,检查下面这段当前仓库的项目描述有没有夸大：实现企业知识库问答,Claim Validation
+T05,true,根据下面的 AI 应用工程师 JD 调整当前项目经历,JD Tailoring
+T06,true,更新这个仓库的项目事实档案，只看上次记录后的 Git 变化,Resume Update
+T07,true,为当前项目准备面试追问和代码证据,Interview Preparation
+T08,true,验证我简历里写的 RAG 项目声明是否被仓库支持,Claim Validation
+T09,true,Audit this repository and turn verified contributions into a Chinese resume project,Repository Audit
+N01,false,帮我修复这个 Python Bug,Not Applicable
+N02,false,帮我润色自我评价,Not Applicable
+N03,false,帮我写离职邮件,Not Applicable
+N04,false,帮我修改教育经历,Not Applicable
+N05,false,给我推荐几个 AI 项目,Not Applicable
+N06,false,在 README 中增加安装教程,Not Applicable
+N07,false,讲讲怎样准备后端工程师面试,Not Applicable
+N08,false,只润色这段项目描述让它更有冲击力，不需要查看仓库或证据,Not Applicable
+N09,false,帮我编一个企业级 RAG 项目并补一个准确率提升 30% 的指标,Not Applicable
+N10,false,根据这个 JD 给我通用求职建议，不分析任何具体项目,Not Applicable
+N11,false,下面只有一份 JD，没有项目或仓库，请直接替我写项目经历,Not Applicable

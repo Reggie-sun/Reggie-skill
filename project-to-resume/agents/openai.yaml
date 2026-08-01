@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project to Resume"
+  short_description: "Turn repository evidence into Chinese resume projects"
+  default_prompt: "Use $project-to-resume to audit this repository and produce evidence-backed Chinese resume project material without inventing ownership, deployment status, or metrics."
