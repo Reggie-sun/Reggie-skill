@@ -1,0 +1,179 @@
+---
+name: team-designer
+description: Meta-skill for generating team skills following the v4 architecture pattern. Produces complete skill packages with SKILL.md router, coordinator, worker roles, specs, and templates. Triggers on "team-designer", "design team".
+allowed-tools: spawn_agent(*), wait_agent(*), send_message(*), assign_task(*), close_agent(*), report_agent_job_result(*), request_user_input(*), Read(*), Write(*), Edit(*), Bash(*), Glob(*), Grep(*)
+---
+
+# Team Skill Designer
+
+Generate complete team skills following the team-lifecycle-v4 architecture: SKILL.md as universal router, coordinator with beat model, worker roles with optional commands/, shared specs, and templates.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Team Skill Designer (SKILL.md)                                  │
+│  → Orchestrator: gather requirements, generate files, validate   │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │
+    ┌───────────┬───────────┼───────────┬───────────┐
+    ↓           ↓           ↓           ↓
+┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
+│ Phase 1 │ │ Phase 2 │ │ Phase 3 │ │ Phase 4 │
+│ Require │ │ Scaffold│ │ Content │ │ Valid   │
+│ Analysis│ │  Gen    │ │  Gen    │ │ & Report│
+└─────────┘ └─────────┘ └─────────┘ └─────────┘
+     ↓           ↓           ↓           ↓
+  teamConfig  SKILL.md    roles/      Validated
+              + dirs     specs/       skill pkg
+                         templates/
+```
+
+## Key Design Principles
+
+1. **v4 Architecture Compliance**: Generated skills follow team-lifecycle-v4 pattern — SKILL.md = pure router, beat model = coordinator-only, unified structure (roles/ + specs/ + templates/)
+2. **Golden Sample Reference**: Uses `team-lifecycle-v4` as reference implementation at `~  or <project>/.claude/skills/team-lifecycle-v4/`
+3. **Intelligent Commands Distribution**: Auto-determines which roles need `commands/` (2+ commands) vs inline logic (1 command)
+4. **team-worker Compatibility**: Role.md files include correct YAML frontmatter for team-worker agent parsing
+
+## Execution Flow
+
+```
+Progress Tracking Initialization:
+   └─ functions.update_plan([all 4 phases, Phase 1 as in_progress])
+
+Input Parsing:
+   └─ Parse user requirements (skill name, roles, pipelines, domain)
+
+Phase 1: Requirements Analysis
+   └─ Ref: phases/01-requirements-analysis.md
+      ├─ Tasks: Detect input → Gather roles → Define pipelines → Build teamConfig
+      └─ Output: teamConfig
+      └─ Progress: mark phase-1 completed, phase-2 in_progress
+
+Phase 2: Scaffold Generation
+   └─ Ref: phases/02-scaffold-generation.md
+      ├─ Tasks: Create dirs → Generate SKILL.md router → Verify
+      └─ Output: SKILL.md + directory structure
+      └─ Progress: mark phase-2 completed, phase-3 in_progress
+
+Phase 3: Content Generation
+   └─ Ref: phases/03-content-generation.md
+      ├─ Tasks: Coordinator → Workers → Specs → Templates
+      └─ Output: roles/**/*.md, specs/*.md, templates/*.md
+      └─ Progress: mark phase-3 completed, phase-4 in_progress
+
+Phase 4: Validation
+   └─ Ref: phases/04-validation.md
+      └─ Output: Validation report (PASS/REVIEW/FAIL)
+      └─ Progress: mark phase-4 completed
+
+Return:
+   └─ Summary with skill location and usage instructions
+```
+
+**Phase Reference Documents** (read on-demand when phase executes):
+
+| Phase | Document | Purpose |
+|-------|----------|---------|
+| 1 | [phases/01-requirements-analysis.md](phases/01-requirements-analysis.md) | Gather team skill requirements, build teamConfig |
+| 2 | [phases/02-scaffold-generation.md](phases/02-scaffold-generation.md) | Generate SKILL.md router and directory structure |
+| 3 | [phases/03-content-generation.md](phases/03-content-generation.md) | Generate coordinator, workers, specs, templates |
+| 4 | [phases/04-validation.md](phases/04-validation.md) | Validate structure, references, and consistency |
+
+## Golden Sample
+
+Generated skills follow the architecture of `~  or <project>/.claude/skills/team-lifecycle-v4/`:
+
+```
+.claude/skills/<skill-name>/
+├── SKILL.md                              # Universal router (all roles read)
+├── roles/
+│   ├── coordinator/
+│   │   ├── role.md                       # Orchestrator + beat model + entry router
+│   │   └── commands/
+│   │       ├── analyze.md                # Task analysis
+│   │       ├── dispatch.md               # Task chain creation
+│   │       └── monitor.md                # Beat control + callbacks
+│   ├── <inline-worker>/
+│   │   └── role.md                       # Phase 2-4 embedded (simple role)
+│   └── <command-worker>/
+│       ├── role.md                       # Phase 2-4 dispatcher
+│       └── commands/
+│           ├── <cmd-1>.md
+│           └── <cmd-2>.md
+├── specs/
+│   ├── pipelines.md                      # Pipeline definitions + task registry
+│   └── <domain-specs>.md                 # Domain-specific specifications
+└── templates/                            # Optional document templates
+```
+
+## Progress Tracking
+
+Initialize progress tracking before Phase 1 execution:
+
+```
+functions.update_plan([
+  { id: "phase-1", title: "Phase 1: Requirements Analysis", status: "in_progress" },
+  { id: "phase-2", title: "Phase 2: Scaffold Generation", status: "pending" },
+  { id: "phase-3", title: "Phase 3: Content Generation", status: "pending" },
+  { id: "phase-4", title: "Phase 4: Validation", status: "pending" }
+])
+```
+
+At each phase transition:
+- **Phase 1 complete**: `functions.update_plan([{id: "phase-1", status: "completed"}, {id: "phase-2", status: "in_progress"}])`
+- **Phase 2 complete**: `functions.update_plan([{id: "phase-2", status: "completed"}, {id: "phase-3", status: "in_progress"}])`
+- **Phase 3 complete**: `functions.update_plan([{id: "phase-3", status: "completed"}, {id: "phase-4", status: "in_progress"}])`
+- **Phase 4 complete**: `functions.update_plan([{id: "phase-4", status: "completed"}])`
+
+## Data Flow
+
+```
+User Input (skill name, roles, pipelines)
+    ↓
+Phase 1: Requirements Analysis
+    ↓ Output: teamConfig
+    ↓
+Phase 2: Scaffold Generation
+    ↓ Input: teamConfig
+    ↓ Output: SKILL.md + skillDir
+    ↓
+Phase 3: Content Generation
+    ↓ Input: teamConfig + skillDir
+    ↓ Output: roles/, specs/, templates/
+    ↓
+Phase 4: Validation
+    ↓ Input: teamConfig + all files
+    ↓ Output: validation report
+    ↓
+Return summary to user
+```
+
+## Core Rules
+
+1. **Start Immediately**: First action is progress tracking initialization, second action is Phase 1 execution
+2. **Parse Every Output**: Extract teamConfig from Phase 1 for subsequent phases
+3. **Auto-Continue**: After each phase, automatically execute next phase
+4. **Progressive Phase Loading**: Read phase docs ONLY when that phase is about to execute
+5. **Golden Sample Fidelity**: Generated files must match team-lifecycle-v4 patterns
+6. **DO NOT STOP**: Continuous workflow until all 4 phases complete
+
+## Input Processing
+
+Convert user input to structured format:
+
+```
+SKILL_NAME: [kebab-case name, e.g., team-code-review]
+DOMAIN: [what this team does, e.g., "multi-stage code review with security analysis"]
+ROLES: [worker roles beyond coordinator, e.g., "analyst, reviewer, security-expert"]
+PIPELINES: [pipeline types and flows, e.g., "review-only: SCAN-001 → REVIEW-001 → REPORT-001"]
+SESSION_PREFIX: [3-4 char, e.g., TCR]
+```
+
+## Error Handling
+
+- **Invalid role name**: Must be lowercase alphanumeric with hyphens, max 20 chars
+- **Circular dependencies**: Detect and report in pipeline validation
+- **Missing golden sample**: Fall back to embedded templates in phase files
+- **Directory conflict**: Warn if skill directory already exists, ask user to confirm overwrite

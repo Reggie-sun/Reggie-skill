@@ -1,0 +1,7 @@
+interface:
+  display_name: "Agent Memory Capture"
+  short_description: "被动触发：把踩坑路由到 bug-memory、AGENTS 或 continuation target"
+  default_prompt: "Use $agent-memory-capture to decide whether this session lesson belongs in repo-local bug-memory, AGENTS.md, a repo-defined continuation target, or nowhere, then write the minimal correct note."
+
+policy:
+  allow_implicit_invocation: true

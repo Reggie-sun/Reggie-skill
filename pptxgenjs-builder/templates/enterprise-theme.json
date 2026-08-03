@@ -1,0 +1,45 @@
+{
+  "slideSize": {
+    "name": "LAYOUT_WIDE",
+    "ratio": "16:9",
+    "width": 13.333,
+    "height": 7.5
+  },
+  "fontFace": [
+    "Microsoft YaHei",
+    "Noto Sans CJK SC",
+    "Arial"
+  ],
+  "fontSize": {
+    "title": 24,
+    "body": 15,
+    "small": 9
+  },
+  "margin": {
+    "left": 0.65,
+    "right": 0.65,
+    "top": 0.5,
+    "bottom": 0.45
+  },
+  "safeArea": {
+    "left": 0.65,
+    "right": 12.68,
+    "top": 0.45,
+    "bottom": 7.05
+  },
+  "colors": {
+    "background": "FFFFFF",
+    "text": "1F2937",
+    "muted": "64748B",
+    "border": "D6DEE8",
+    "primary": "1D4ED8",
+    "accent": "0F766E",
+    "soft": "EFF6FF",
+    "softAccent": "ECFDF5"
+  },
+  "styleGuidance": {
+    "background": "默认白底，不使用复杂图片背景。",
+    "tone": "企业汇报风格，深色文字、少量强调色，优先清晰可读。",
+    "density": "每页一个核心观点，正文尽量控制在 3-5 条 bullet。"
+  }
+}

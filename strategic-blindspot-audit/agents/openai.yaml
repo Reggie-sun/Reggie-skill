@@ -1,0 +1,6 @@
+interface:
+  display_name: "Strategic Blindspot Audit"
+  short_description: "Find a decision-changing blind spot"
+  default_prompt: "Use $strategic-blindspot-audit to audit my accessible history and identify one high-leverage blind spot that should change my priorities."
+policy:
+  allow_implicit_invocation: true

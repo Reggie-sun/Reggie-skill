@@ -1,0 +1,7 @@
+interface:
+  display_name: "Branch Worktree Dev"
+  short_description: "One-command branch, worktree, API and frontend"
+  default_prompt: "Use $branch-worktree-dev as a setup-and-switch workflow: create a new branch/worktree, start the local API plus frontend dev servers, then continue only from the reported worktree path; if the current session cannot relocate there, stop after setup and hand off instead of editing or testing in the source worktree."
+
+policy:
+  allow_implicit_invocation: true

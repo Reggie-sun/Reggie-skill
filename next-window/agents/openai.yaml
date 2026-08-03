@@ -1,0 +1,7 @@
+interface:
+  display_name: "Next Window"
+  short_description: "被动生成下个窗口 prompt，不在当前窗执行"
+  default_prompt: "Use $next-window to prepare a bounded continuation prompt for the next window from the current handoff and repo context, without implementing code in this window."
+
+policy:
+  allow_implicit_invocation: true

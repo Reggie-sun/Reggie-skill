@@ -1,0 +1,7 @@
+interface:
+  display_name: "Weekly Report"
+  short_description: "Write a natural weekly report from work evidence"
+  default_prompt: "Use $weekly-report to turn recent git history, memory, and session progress into a concise weekly report focused on what got done."
+
+policy:
+  allow_implicit_invocation: true

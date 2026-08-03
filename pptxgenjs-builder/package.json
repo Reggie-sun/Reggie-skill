@@ -1,0 +1,12 @@
+{
+  "name": "pptxgenjs-builder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "demo": "node scripts/build-pptx.mjs examples/slides_outline.example.json output/demo.pptx"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

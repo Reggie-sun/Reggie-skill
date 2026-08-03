@@ -1,0 +1,7 @@
+interface:
+  display_name: "let user know"
+  short_description: "解释完整窗口的成果、过程、术语及对应 spec/plan 路径"
+  default_prompt: "Use $let-user-know to explain the full logical window in plain Chinese, including its result, material process, and any corresponding spec or selected plan paths."
+
+policy:
+  allow_implicit_invocation: true

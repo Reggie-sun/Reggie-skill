@@ -1,0 +1,7 @@
+interface:
+  display_name: "Plan Auto"
+  short_description: "Context-driven continuation with self-correction"
+  default_prompt: "Use $plan-auto when recent context shows the work should keep moving forward with high autonomy, inferred next steps, and self-correction."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Discussion with claude"
+  short_description: "让 Codex 代发问题给 Claude，并稳定带回结论或失败状态"
+  default_prompt: "Use $discussion-with-claude to ask Claude for a read-only second opinion on this repository question."
+
+policy:
+  allow_implicit_invocation: true
