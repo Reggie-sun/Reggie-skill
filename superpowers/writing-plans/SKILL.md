@@ -180,8 +180,10 @@ After saving the plan, offer execution choice:
 **If Subagent-Driven chosen:**
 - **REQUIRED SUB-SKILL:** Use superpowers:subagent-driven-development
 - Fresh subagent per task + two-stage review
-- Codex subagents use the local `$CODEX_HOME/agents` profiles selected by
-  `superpowers:subagent-driven-development`; dispatches do not pin a model
+- Follow the backend and role selection in `superpowers:subagent-driven-development`:
+  use the host-preferred configured external runner when available, otherwise
+  use equivalent native bounded-writer and read-only-reviewer roles. Dispatches
+  do not pin a model.
 
 **If Inline Execution chosen:**
 - **REQUIRED SUB-SKILL:** Use superpowers:executing-plans

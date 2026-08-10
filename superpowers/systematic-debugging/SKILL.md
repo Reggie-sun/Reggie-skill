@@ -21,33 +21,6 @@ NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
 
 If you haven't completed Phase 1, you cannot propose fixes.
 
-## GStack Project Learnings
-
-Before Phase 1, load the current project's gstack learnings when the gstack helper binaries exist. This mirrors `gstack-investigate`'s read path while keeping this skill usable without gstack installed.
-
-```bash
-_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-GSTACK_ROOT="${GSTACK_ROOT:-$HOME/.codex/skills/gstack}"
-[ -n "$_ROOT" ] && [ -d "$_ROOT/.agents/skills/gstack" ] && GSTACK_ROOT="$_ROOT/.agents/skills/gstack"
-GSTACK_BIN="$GSTACK_ROOT/bin"
-
-if [ -x "$GSTACK_BIN/gstack-slug" ] && [ -x "$GSTACK_BIN/gstack-learnings-search" ]; then
-  eval "$($GSTACK_BIN/gstack-slug 2>/dev/null)" 2>/dev/null || true
-  _LEARN_FILE="${GSTACK_HOME:-$HOME/.gstack}/projects/${SLUG:-unknown}/learnings.jsonl"
-  if [ -f "$_LEARN_FILE" ]; then
-    _LEARN_COUNT=$(wc -l < "$_LEARN_FILE" 2>/dev/null | tr -d ' ')
-    echo "LEARNINGS: $_LEARN_COUNT entries loaded"
-    if [ "$_LEARN_COUNT" -gt 5 ] 2>/dev/null; then
-      "$GSTACK_BIN/gstack-learnings-search" --limit 3 2>/dev/null || true
-    fi
-  else
-    echo "LEARNINGS: 0"
-  fi
-fi
-```
-
-When relevant learnings appear, incorporate them before forming a root-cause hypothesis. Do not treat absent gstack learnings as a blocker.
-
 ## When to Use
 
 Use for ANY technical issue:
@@ -96,20 +69,7 @@ You MUST complete each phase before proceeding to the next.
    - New dependencies, config changes
    - Environmental differences
 
-4. **Check Prior Project Learnings**
-   Search previous debug/root-cause learnings if gstack helpers are available:
-   ```bash
-   _ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-   GSTACK_ROOT="${GSTACK_ROOT:-$HOME/.codex/skills/gstack}"
-   [ -n "$_ROOT" ] && [ -d "$_ROOT/.agents/skills/gstack" ] && GSTACK_ROOT="$_ROOT/.agents/skills/gstack"
-
-   if [ -x "$GSTACK_ROOT/bin/gstack-learnings-search" ]; then
-     "$GSTACK_ROOT/bin/gstack-learnings-search" --limit 10 --query "debug investigation root cause hypothesis bug fix" 2>/dev/null || true
-   fi
-   ```
-   If matches appear, name which learning applies and how it affects the investigation.
-
-5. **Gather Evidence in Multi-Component Systems**
+4. **Gather Evidence in Multi-Component Systems**
 
    **WHEN system has multiple components (CI → build → signing, API → service → database):**
 
@@ -147,7 +107,7 @@ You MUST complete each phase before proceeding to the next.
 
    **This reveals:** Which layer fails (secrets → workflow ✓, workflow → build ✗)
 
-6. **Trace Data Flow**
+5. **Trace Data Flow**
 
    **WHEN error is deep in call stack:**
 
@@ -190,17 +150,6 @@ You MUST complete each phase before proceeding to the next.
    - State clearly: "I think X is the root cause because Y"
    - Write it down
    - Be specific, not vague
-
-   After naming the hypothesis, refresh project learnings with one focused keyword:
-   ```bash
-   _ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
-   GSTACK_ROOT="${GSTACK_ROOT:-$HOME/.codex/skills/gstack}"
-   [ -n "$_ROOT" ] && [ -d "$_ROOT/.agents/skills/gstack" ] && GSTACK_ROOT="$_ROOT/.agents/skills/gstack"
-
-   if [ -x "$GSTACK_ROOT/bin/gstack-learnings-search" ]; then
-     "$GSTACK_ROOT/bin/gstack-learnings-search" --query "<hypothesis-keyword>" --limit 5 2>/dev/null || true
-   fi
-   ```
 
 2. **Test Minimally**
    - Make the SMALLEST possible change to test hypothesis

@@ -5,285 +5,204 @@ description: Use when executing implementation plans with independent tasks in t
 
 # Subagent-Driven Development
 
-Execute plan by dispatching fresh subagent per task, with two-stage review after each: spec compliance review first, then code quality review.
+Execute a plan by dispatching a fresh implementation subagent per task, followed by two independent review gates: specification compliance first, then code quality.
 
-**Why subagents:** You delegate tasks to specialized agents with isolated context. By precisely crafting their instructions and context, you ensure they stay focused and succeed at their task. They should never inherit your session's context or history — you construct exactly what they need. This also preserves your own context for coordination work.
+**Core principle:** Fresh writer per task + fresh reviewers + parent-owned integration = focused execution without surrendering control.
 
-**Core principle:** Fresh subagent per task + two-stage review (spec then quality) = high quality, fast iteration
-
-**Continuous execution:** Do not pause to check in with your human partner between tasks. Execute all tasks from the plan without stopping. The only reasons to stop are: BLOCKED status you cannot resolve, ambiguity that genuinely prevents progress, or all tasks complete. "Should I continue?" prompts and progress summaries waste their time — they asked you to execute the plan, so execute it.
+**Continuous execution:** Do not pause between tasks merely to ask your human partner whether to continue. Stop only for a blocker you cannot safely resolve, material ambiguity, a high-risk decision, scope expansion, or completion.
 
 ## When to Use
 
-```dot
-digraph when_to_use {
-    "Have implementation plan?" [shape=diamond];
-    "Tasks mostly independent?" [shape=diamond];
-    "Stay in this session?" [shape=diamond];
-    "subagent-driven-development" [shape=box];
-    "executing-plans" [shape=box];
-    "Manual execution or brainstorm first" [shape=box];
+Use this workflow when:
 
-    "Have implementation plan?" -> "Tasks mostly independent?" [label="yes"];
-    "Have implementation plan?" -> "Manual execution or brainstorm first" [label="no"];
-    "Tasks mostly independent?" -> "Stay in this session?" [label="yes"];
-    "Tasks mostly independent?" -> "Manual execution or brainstorm first" [label="no - tightly coupled"];
-    "Stay in this session?" -> "subagent-driven-development" [label="yes"];
-    "Stay in this session?" -> "executing-plans" [label="no - parallel session"];
-}
-```
+- A written implementation plan already exists.
+- Tasks are sufficiently independent to execute serially with bounded ownership.
+- The user wants the work completed in the current parent session.
+- Delegation materially reduces context load, implementation risk, or review uncertainty.
 
-**vs. Executing Plans (parallel session):**
-- Same session (no context switch)
-- Fresh subagent per task (no context pollution)
-- Two-stage review after each task: spec compliance first, then code quality
-- Faster iteration (no human-in-loop between tasks)
+Keep tightly coupled work in the parent thread. Use `superpowers:executing-plans` when the work belongs in a separate session.
+
+## Workspace Decision
+
+Before dispatching any writer, the parent inspects repository rules, live-agent ownership, the current branch, and `git status`.
+
+Choose the least costly safe lane:
+
+- **Current working tree, including `main`:** allowed for solo, serial, low-risk work when repository rules permit and there are no unrelated uncommitted changes.
+- **Feature branch in the current tree:** use when history isolation is useful but filesystem isolation is not.
+- **Dedicated worktree:** use when another writer/session is active, unrelated dirty work exists, two branches must remain runnable, the task is high risk or long lived, or a higher-priority rule requires it.
+
+Use `superpowers:using-git-worktrees` only when the selected lane actually needs a worktree. A branch or worktree is an isolation mechanism, not a mandatory ceremony.
+
+Before implementation, record:
+
+- Problem boundary and acceptance criteria.
+- Exact file/module ownership for the writer.
+- Behavior or contract that must remain unchanged.
+- Old path to replace or remove, when applicable.
+- Focused verification command.
+
+## Dispatch Backend and Roles
+
+Follow the higher-priority host delegation policy. On a host configured to prefer MiniMax, use the installed `sub-agents` skill as the default dispatch backend. Resolve agent definitions from the project `.agents` directory first, then fall back to the host's global agent directory (`/home/reggie/.agents` on this installation).
+
+Default role mapping:
+
+| Work | Agent definition | Authority |
+|---|---|---|
+| Implementation and review fixes | `writer` | Bounded write access to assigned files |
+| Spec compliance review | `reviewer` | Read-only |
+| Code quality review | `reviewer` | Read-only |
+| Final whole-change review | `reviewer` | Read-only |
+
+The installed definitions own their backend and model. On the configured MiniMax path they use `run-agent: minimax`; do not pass `--cli` or override the configured model unless your human partner or a higher-priority rule explicitly requires it.
+
+Let the selected definition own its idle timeout. The host-global maximum-effort `writer` uses 30 minutes; do not replace it with a hard-coded 10-minute wall timeout. Runner heartbeat/activity is evidence of liveness, and active work must not be declared stuck merely because no final report has arrived.
+
+Before the first dispatch:
+
+1. Use `sub-agents` to list/validate the selected definitions.
+2. Confirm the external runner and credentials are available without printing secrets.
+3. If project and global definitions share a name, prefer the project definition.
+
+If `sub-agents` or the selected definitions are not installed, use the harness's native `Agent`/`Task` mechanism with equivalent bounded writer and read-only reviewer roles. Also use native dispatch when a higher-priority rule requires it or the task needs a capability the external runner cannot provide. State the fallback and reason; never silently change backends. This keeps the core workflow usable without making the external runner a plugin dependency while honoring MiniMax-first host policy where configured.
+
+External CLI calls are **fresh and stateless**. “Same implementer” means the same implementation lane and role, not the same process. Every fix dispatch must repeat the complete task, working directory, allowed files, current workspace state, prior writer report, and exact reviewer findings.
 
 ## The Process
 
-```dot
-digraph process {
-    rankdir=TB;
+### 1. Load and Prepare
 
-    subgraph cluster_per_task {
-        label="Per Task";
-        "Dispatch implementer subagent (./implementer-prompt.md)" [shape=box];
-        "Implementer subagent asks questions?" [shape=diamond];
-        "Answer questions, provide context" [shape=box];
-        "Implementer subagent implements, tests, commits, self-reviews" [shape=box];
-        "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [shape=box];
-        "Spec reviewer subagent confirms code matches spec?" [shape=diamond];
-        "Implementer subagent fixes spec gaps" [shape=box];
-        "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [shape=box];
-        "Code quality reviewer subagent approves?" [shape=diamond];
-        "Implementer subagent fixes quality issues" [shape=box];
-        "Mark task complete in TodoWrite" [shape=box];
-    }
+Read the plan once. Extract every task with its full text and relevant context. Create entries in the available task tracker (`update_plan` on Codex, `TodoWrite` on Claude).
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" [shape=box];
-    "More tasks remain?" [shape=diamond];
-    "Dispatch final code reviewer subagent for entire implementation" [shape=box];
-    "Use superpowers:finishing-a-development-branch" [shape=box style=filled fillcolor=lightgreen];
+Do not make a subagent reconstruct the task by reading the plan. Give it the complete task text directly. It may inspect repository files needed to perform its bounded assignment.
 
-    "Read plan, extract all tasks with full text, note context, create TodoWrite" -> "Dispatch implementer subagent (./implementer-prompt.md)";
-    "Dispatch implementer subagent (./implementer-prompt.md)" -> "Implementer subagent asks questions?";
-    "Implementer subagent asks questions?" -> "Answer questions, provide context" [label="yes"];
-    "Answer questions, provide context" -> "Dispatch implementer subagent (./implementer-prompt.md)";
-    "Implementer subagent asks questions?" -> "Implementer subagent implements, tests, commits, self-reviews" [label="no"];
-    "Implementer subagent implements, tests, commits, self-reviews" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)";
-    "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" -> "Spec reviewer subagent confirms code matches spec?";
-    "Spec reviewer subagent confirms code matches spec?" -> "Implementer subagent fixes spec gaps" [label="no"];
-    "Implementer subagent fixes spec gaps" -> "Dispatch spec reviewer subagent (./spec-reviewer-prompt.md)" [label="re-review"];
-    "Spec reviewer subagent confirms code matches spec?" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="yes"];
-    "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" -> "Code quality reviewer subagent approves?";
-    "Code quality reviewer subagent approves?" -> "Implementer subagent fixes quality issues" [label="no"];
-    "Implementer subagent fixes quality issues" -> "Dispatch code quality reviewer subagent (./code-quality-reviewer-prompt.md)" [label="re-review"];
-    "Code quality reviewer subagent approves?" -> "Mark task complete in TodoWrite" [label="yes"];
-    "Mark task complete in TodoWrite" -> "More tasks remain?";
-    "More tasks remain?" -> "Dispatch implementer subagent (./implementer-prompt.md)" [label="yes"];
-    "More tasks remain?" -> "Dispatch final code reviewer subagent for entire implementation" [label="no"];
-    "Dispatch final code reviewer subagent for entire implementation" -> "Use superpowers:finishing-a-development-branch";
-}
-```
+### 2. Implement One Task
 
-## Codex Agent Profile Selection
+Dispatch a fresh `writer` using `./implementer-prompt.md`.
 
-On Codex, select native agent profiles registered from `$CODEX_HOME/agents`
-(`/home/reggie/.codex/agents` on this host). Pass `agent_type`; do not pass
-`model` or `reasoning_effort`. Each profile's TOML file owns its model, reasoning
-effort, sandbox, and role instructions.
+The writer must:
 
-| Work | `agent_type` | Local profile |
-|------|--------------|---------------|
-| Code behavior change using RED-GREEN-REFACTOR | `tdd_developer` | `tdd-developer.toml` |
-| Code task where TDD is explicitly inapplicable | `code_developer` | `code-developer.toml` |
-| Bounded docs, config, or other non-code implementation | `bounded_worker` | `bounded-worker.toml` |
-| Spec compliance, code quality, and final review | `reviewer` | `reviewer.toml` |
+- Stay within explicit file and behavior boundaries.
+- Avoid reverting or overwriting concurrent work.
+- Use RED-GREEN-REFACTOR for behavior changes unless TDD is genuinely inapplicable.
+- Run focused verification and self-review.
+- Never spawn subagents.
+- Never stage or commit unless the parent explicitly grants that authority.
 
-Use `fork_turns: "none"` and provide complete curated context in the dispatch
-message. If the selected local profile is unavailable on the current tool
-surface, disclose the fallback and use the closest available role without
-silently pinning a model.
+Handle its status:
 
-If a task cannot be completed well with the selected profile, change the task
-shape instead: provide more context, split the task smaller, or escalate to the
-human partner.
+- **DONE:** proceed to spec review.
+- **DONE_WITH_CONCERNS:** assess concerns before review; resolve correctness or scope concerns first.
+- **NEEDS_CONTEXT:** add the missing context and re-dispatch a fresh writer.
+- **BLOCKED:** change context, task shape, or plan before retrying; escalate if the plan or authority must change.
 
-## Handling Implementer Status
+Never retry an unchanged prompt after a blocker.
 
-Implementer subagents report one of four statuses. Handle each appropriately:
+### 3. Spec Compliance Review
 
-**DONE:** Proceed to spec compliance review.
+Dispatch a fresh read-only `reviewer` using `./spec-reviewer-prompt.md`. The reviewer inspects the actual files and diff rather than trusting the writer report.
 
-**DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
+If rejected, dispatch a fresh `writer` with:
 
-**NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch.
+- The complete original task and boundaries.
+- Current workspace state and files already changed.
+- The previous writer report.
+- Every exact reviewer finding.
+- The focused verification command.
 
-**BLOCKED:** The implementer cannot complete the task. Assess the blocker:
-1. If it's a context problem, provide more context and re-dispatch with the same local agent profile
-2. If the task requires more reasoning, keep the same local agent profile and split the task or provide sharper context
-3. If the task is too large, break it into smaller pieces
-4. If the plan itself is wrong, escalate to the human
+Then dispatch a fresh spec reviewer again. Repeat until accepted or genuinely blocked.
 
-**Never** ignore an escalation or retry without changing context, task shape, or
-plan details. If the implementer said it's stuck, something needs to change, but
-the Codex agent profile stays the same unless the nature of the task changes.
+### 4. Code Quality Review
+
+Only after spec compliance passes, dispatch a fresh read-only `reviewer` using `./code-quality-reviewer-prompt.md`.
+
+Review the actual task change scope. Because the parent normally has not committed yet, this will usually be a working-tree diff from the recorded base SHA plus any task-specific file list. Do not invent a `HEAD_SHA` that excludes uncommitted work.
+
+If rejected, use the same fresh fix-dispatch pattern and re-run code quality review. If a quality fix changes externally visible requirements, run spec review again before returning to quality review.
+
+### 5. Parent Integration
+
+After both task gates pass, the parent:
+
+1. Inspects `git diff` and confirms every changed line belongs to the task.
+2. Runs the focused verification from a known workspace state.
+3. Stages only explicit task files.
+4. Commits this task's stable checkpoint when repository policy requires or permits it; do not defer several accepted tasks into one commit unless the repository policy or task shape calls for that.
+5. Marks the task complete in the task tracker.
+
+The parent owns Git operations, conflict resolution, scope decisions, and the final implementation path. Passing reviews does not transfer that responsibility.
+
+### 6. Final Review and Completion
+
+After all tasks, dispatch one fresh read-only `reviewer` over the complete implementation. The final report must include:
+
+- Verdict: `accept`, `accept with concerns`, or `reject`.
+- Blocking issues and non-blocking concerns.
+- Evidence from files and verification.
+- Recommended minimal follow-up.
+
+The parent verifies important review claims, inspects final status/diff, and runs proportional final checks. If work used a feature branch or worktree, use `superpowers:finishing-a-development-branch`; otherwise complete directly in the current-tree lane and report the result to your human partner.
 
 ## Prompt Templates
 
-- `./implementer-prompt.md` - Dispatch implementer subagent
-- `./spec-reviewer-prompt.md` - Dispatch spec compliance reviewer subagent
-- `./code-quality-reviewer-prompt.md` - Dispatch code quality reviewer subagent
+- `./implementer-prompt.md` — fresh MiniMax writer or fix writer
+- `./spec-reviewer-prompt.md` — fresh MiniMax spec reviewer
+- `./code-quality-reviewer-prompt.md` — fresh MiniMax quality/final reviewer
 
 ## Example Workflow
 
+```text
+Parent: Read plan once, extract tasks, inspect Git state, choose clean-main lane.
+Parent: Validate project/global writer and reviewer definitions through sub-agents.
+
+Task 1:
+  Fresh MiniMax writer -> tests + implementation + self-review, no commit
+  Fresh MiniMax reviewer -> spec reject: missing progress reporting
+  Fresh MiniMax writer -> receives full task + current state + exact finding; fixes
+  Fresh MiniMax reviewer -> spec accept
+  Fresh MiniMax reviewer -> quality reject: magic number
+  Fresh MiniMax writer -> receives full context; fixes and verifies
+  Fresh MiniMax reviewer -> quality accept
+  Parent -> reviews diff, verifies, stages exact files, commits checkpoint
+
+After all tasks:
+  Fresh MiniMax reviewer -> whole-change verdict
+  Parent -> verifies claims and completes the selected Git lane
 ```
-You: I'm using Subagent-Driven Development to execute this plan.
-
-[Read plan file once: docs/superpowers/plans/feature-plan.md]
-[Extract all 5 tasks with full text and context]
-[Create TodoWrite with all tasks]
-
-Task 1: Hook installation script
-
-[Get Task 1 text and context (already extracted)]
-[Dispatch implementation subagent with full task text + context]
-
-Implementer: "Before I begin - should the hook be installed at user or system level?"
-
-You: "User level (~/.config/superpowers/hooks/)"
-
-Implementer: "Got it. Implementing now..."
-[Later] Implementer:
-  - Implemented install-hook command
-  - Added tests, 5/5 passing
-  - Self-review: Found I missed --force flag, added it
-  - Committed
-
-[Dispatch spec compliance reviewer]
-Spec reviewer: ✅ Spec compliant - all requirements met, nothing extra
-
-[Get git SHAs, dispatch code quality reviewer]
-Code reviewer: Strengths: Good test coverage, clean. Issues: None. Approved.
-
-[Mark Task 1 complete]
-
-Task 2: Recovery modes
-
-[Get Task 2 text and context (already extracted)]
-[Dispatch implementation subagent with full task text + context]
-
-Implementer: [No questions, proceeds]
-Implementer:
-  - Added verify/repair modes
-  - 8/8 tests passing
-  - Self-review: All good
-  - Committed
-
-[Dispatch spec compliance reviewer]
-Spec reviewer: ❌ Issues:
-  - Missing: Progress reporting (spec says "report every 100 items")
-  - Extra: Added --json flag (not requested)
-
-[Implementer fixes issues]
-Implementer: Removed --json flag, added progress reporting
-
-[Spec reviewer reviews again]
-Spec reviewer: ✅ Spec compliant now
-
-[Dispatch code quality reviewer]
-Code reviewer: Strengths: Solid. Issues (Important): Magic number (100)
-
-[Implementer fixes]
-Implementer: Extracted PROGRESS_INTERVAL constant
-
-[Code reviewer reviews again]
-Code reviewer: ✅ Approved
-
-[Mark Task 2 complete]
-
-...
-
-[After all tasks]
-[Dispatch final code-reviewer]
-Final reviewer: All requirements met, ready to merge
-
-Done!
-```
-
-## Advantages
-
-**vs. Manual execution:**
-- Subagents follow TDD naturally
-- Fresh context per task (no confusion)
-- Parallel-safe (subagents don't interfere)
-- Subagent can ask questions (before AND during work)
-
-**vs. Executing Plans:**
-- Same session (no handoff)
-- Continuous progress (no waiting)
-- Review checkpoints automatic
-
-**Efficiency gains:**
-- No file reading overhead (controller provides full text)
-- Controller curates exactly what context is needed
-- Subagent gets complete information upfront
-- Questions surfaced before work begins (not after)
-
-**Quality gates:**
-- Self-review catches issues before handoff
-- Two-stage review: spec compliance, then code quality
-- Review loops ensure fixes actually work
-- Spec compliance prevents over/under-building
-- Code quality ensures implementation is well-built
-
-**Cost:**
-- More subagent invocations (implementer + 2 reviewers per task)
-- Controller does more prep work (extracting all tasks upfront)
-- Review loops add iterations
-- But catches issues early (cheaper than debugging later)
 
 ## Red Flags
 
-**Never:**
-- Start implementation on main/master branch without explicit user consent
-- Skip reviews (spec compliance OR code quality)
-- Proceed with unfixed issues
-- Dispatch multiple implementation subagents in parallel (conflicts)
-- Make subagent read plan file (provide full text instead)
-- Skip scene-setting context (subagent needs to understand where task fits)
-- Ignore subagent questions (answer before letting them proceed)
-- Accept "close enough" on spec compliance (spec reviewer found issues = not done)
-- Skip review loops (reviewer found issues = implementer fixes = review again)
-- Let implementer self-review replace actual review (both are needed)
-- **Start code quality review before spec compliance is ✅** (wrong order)
-- Move to next task while either review has open issues
+Never:
 
-**If subagent asks questions:**
-- Answer clearly and completely
-- Provide additional context if needed
-- Don't rush them into implementation
-
-**If reviewer finds issues:**
-- Implementer (same subagent) fixes them
-- Reviewer reviews again
-- Repeat until approved
-- Don't skip the re-review
-
-**If subagent fails task:**
-- Dispatch fix subagent with specific instructions
-- Don't try to fix manually (context pollution)
+- Spawn multiple writers into the same working tree or overlapping files.
+- Use a worktree automatically without an actual isolation trigger.
+- Modify a dirty current tree when unrelated user work is present.
+- Let an external writer stage, commit, reset, clean, or revert by default.
+- Assume a fresh external invocation remembers a prior conversation.
+- Replace the writer's configured idle timeout with a shorter fixed wall deadline.
+- Ask a subagent to infer the task from the plan instead of receiving full task text.
+- Skip spec or quality review, reverse their order, or skip re-review after fixes.
+- Treat self-review as a substitute for independent review.
+- Continue while either review has blocking findings.
+- Accept a subagent summary as verified truth.
+- Let any subagent spawn or coordinate other subagents.
+- Silently fall back from the host's preferred backend to another backend.
 
 ## Integration
 
-**Required workflow skills:**
-- **superpowers:using-git-worktrees** - Ensures isolated workspace (creates one or verifies existing)
-- **superpowers:writing-plans** - Creates the plan this skill executes
-- **superpowers:requesting-code-review** - Code review template for reviewer subagents
-- **superpowers:finishing-a-development-branch** - Complete development after all tasks
+**Primary dispatch skill:**
 
-**Subagents should use:**
-- **superpowers:test-driven-development** - Subagents follow TDD for each task
+- **sub-agents** — When installed and selected by host policy, runs the preferred MiniMax `writer` and `reviewer` definitions. Native `Agent`/`Task` remains the portable fallback.
 
-**Alternative workflow:**
-- **superpowers:executing-plans** - Use for parallel session instead of same-session execution
+**Workflow skills:**
+
+- **superpowers:writing-plans** — Produces the plan this skill executes.
+- **superpowers:test-driven-development** — Governs behavior-changing implementation.
+- **superpowers:requesting-code-review** — Supplies review content and calibration.
+- **superpowers:using-git-worktrees** — Conditional, only when workspace isolation is required.
+- **superpowers:finishing-a-development-branch** — Conditional, only for branch/worktree completion.
+
+**Alternative:**
+
+- **superpowers:executing-plans** — Use when execution belongs in a separate session.

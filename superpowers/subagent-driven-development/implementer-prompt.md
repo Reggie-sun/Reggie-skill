@@ -1,120 +1,61 @@
 # Implementer Subagent Prompt Template
 
-Use this template when dispatching an implementer subagent.
+When host policy selects the installed `sub-agents` runner, use this template with the project `writer` definition when present; otherwise use the host-global `writer` definition (`/home/reggie/.agents` on this installation). Do not override its configured MiniMax backend or model by default. If the external runner is unavailable, translate the same role, scope, authority, boundaries, and output contract to the harness's native writer dispatch.
 
+Do not override the writer's configured idle timeout with a shorter fixed wall timeout. Treat runner activity/heartbeat as liveness; an idle timeout returns partial text, session id, and last event for a context-preserving retry decision.
+
+Each invocation is fresh and stateless. For a fix, include the entire original task plus the current state and all review findings again.
+
+```text
+Agent: writer
+Working directory: [ABSOLUTE_DIRECTORY]
+
+Role: Bounded implementation writer for Task N: [TASK_NAME]
+
+## Task
+
+[FULL TASK TEXT — paste it here; do not make the writer read the plan]
+
+## Context
+
+[Where this task fits, dependencies, relevant architecture, accepted decisions]
+
+## Scope and Authority
+
+- Write-capable only within: [EXACT FILES OR DIRECTORIES]
+- Required behavior to preserve: [UNCHANGED CONTRACT]
+- Old path to replace/remove, if any: [OLD PATH]
+- Do not modify: [EXPLICIT BOUNDARIES]
+- Do not stage, commit, reset, clean, revert, or overwrite unrelated changes.
+- Assume other agents may be working concurrently; adapt to current files without reverting their work.
+- Do not spawn, request, or coordinate subagents.
+- If any higher-priority rule conflicts with this scope or authority, stop and report the conflict.
+
+## Current Workspace State
+
+[BRANCH, BASE SHA, RELEVANT git status, FILES ALREADY CHANGED]
+
+## Prior Attempt and Review Findings
+
+[For first attempt: None]
+[For a fix: PRIOR WRITER REPORT + EXACT SPEC/QUALITY FINDINGS]
+
+## Execution
+
+1. Inspect repository rules and only the code needed for this bounded task.
+2. For behavior changes, follow RED-GREEN-REFACTOR unless TDD is genuinely inapplicable; state why if skipped.
+3. Implement exactly the requested behavior with the minimum scoped change.
+4. Run: [FOCUSED VERIFICATION COMMAND]
+5. Self-review completeness, scope, quality, concurrency safety, and the actual diff.
+
+This runner is non-interactive. If information is missing, do not guess and do not partially improvise. Return `NEEDS_CONTEXT` with the exact missing information. Return `BLOCKED` for an authority, repository-rule, or technical blocker.
+
+## Output
+
+- Status: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
+- Concise implementation summary
+- Exact files changed
+- Verification commands and results, or why verification was impossible
+- Self-review findings
+- Risks, concerns, and recommended next step
 ```
-Codex spawn_agent:
-  agent_type: "tdd_developer"  # default for code behavior changes
-  fork_turns: "none"
-  task_name: "implement_task_n"
-  message: |
-    You are implementing Task N: [task name]
-
-    ## Task Description
-
-    [FULL TEXT of task from plan - paste it here, don't make subagent read file]
-
-    ## Context
-
-    [Scene-setting: where this fits, dependencies, architectural context]
-
-    ## Before You Begin
-
-    If you have questions about:
-    - The requirements or acceptance criteria
-    - The approach or implementation strategy
-    - Dependencies or assumptions
-    - Anything unclear in the task description
-
-    **Ask them now.** Raise any concerns before starting work.
-
-    ## Your Job
-
-    Once you're clear on requirements:
-    1. Implement exactly what the task specifies
-    2. Write tests (following TDD if task says to)
-    3. Verify implementation works
-    4. Commit your work
-    5. Self-review (see below)
-    6. Report back
-
-    Work from: [directory]
-
-    **While you work:** If you encounter something unexpected or unclear, **ask questions**.
-    It's always OK to pause and clarify. Don't guess or make assumptions.
-
-    ## Code Organization
-
-    You reason best about code you can hold in context at once, and your edits are more
-    reliable when files are focused. Keep this in mind:
-    - Follow the file structure defined in the plan
-    - Each file should have one clear responsibility with a well-defined interface
-    - If a file you're creating is growing beyond the plan's intent, stop and report
-      it as DONE_WITH_CONCERNS — don't split files on your own without plan guidance
-    - If an existing file you're modifying is already large or tangled, work carefully
-      and note it as a concern in your report
-    - In existing codebases, follow established patterns. Improve code you're touching
-      the way a good developer would, but don't restructure things outside your task.
-
-    ## When You're in Over Your Head
-
-    It is always OK to stop and say "this is too hard for me." Bad work is worse than
-    no work. You will not be penalized for escalating.
-
-    **STOP and escalate when:**
-    - The task requires architectural decisions with multiple valid approaches
-    - You need to understand code beyond what was provided and can't find clarity
-    - You feel uncertain about whether your approach is correct
-    - The task involves restructuring existing code in ways the plan didn't anticipate
-    - You've been reading file after file trying to understand the system without progress
-
-    **How to escalate:** Report back with status BLOCKED or NEEDS_CONTEXT. Describe
-    specifically what you're stuck on, what you've tried, and what kind of help you need.
-    The controller can provide more context, keep the same local agent profile and
-    break the task into smaller pieces, or revise the plan.
-
-    ## Before Reporting Back: Self-Review
-
-    Review your work with fresh eyes. Ask yourself:
-
-    **Completeness:**
-    - Did I fully implement everything in the spec?
-    - Did I miss any requirements?
-    - Are there edge cases I didn't handle?
-
-    **Quality:**
-    - Is this my best work?
-    - Are names clear and accurate (match what things do, not how they work)?
-    - Is the code clean and maintainable?
-
-    **Discipline:**
-    - Did I avoid overbuilding (YAGNI)?
-    - Did I only build what was requested?
-    - Did I follow existing patterns in the codebase?
-
-    **Testing:**
-    - Do tests actually verify behavior (not just mock behavior)?
-    - Did I follow TDD if required?
-    - Are tests comprehensive?
-
-    If you find issues during self-review, fix them now before reporting.
-
-    ## Report Format
-
-    When done, report:
-    - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
-    - What you implemented (or what you attempted, if blocked)
-    - What you tested and test results
-    - Files changed
-    - Self-review findings (if any)
-    - Any issues or concerns
-
-    Use DONE_WITH_CONCERNS if you completed the work but have doubts about correctness.
-    Use BLOCKED if you cannot complete the task. Use NEEDS_CONTEXT if you need
-    information that wasn't provided. Never silently produce work you're unsure about.
-```
-
-For a code task where TDD is explicitly inapplicable, use `code_developer`.
-For bounded docs, config, or other non-code implementation, use
-`bounded_worker`. Do not pass `model` or `reasoning_effort`; the selected profile
-under `$CODEX_HOME/agents` owns those settings.
