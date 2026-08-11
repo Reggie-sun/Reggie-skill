@@ -151,8 +151,15 @@ How results should be structured.
 | `run-agent` | `codex`, `claude`, `cursor-agent`, `glm`, `kimi`, `minimax`, `grok`, `gemini`, `opencode` | Which CLI executes this agent |
 | `model` | Backend-specific model name (optional) | Model passed to the selected CLI; omit to use its configured default |
 | `effort` | Backend/model-specific reasoning level or OpenCode variant (optional) | Advanced: forwarded as an opaque value. Confirm support for the selected model before setting; omit to use its default. MiniMax uses Claude CLI's `--effort`; unsupported on `cursor-agent` and `gemini` |
-| `timeout` | Positive milliseconds (optional) | Per-agent idle timeout used when `--timeout` is omitted; activity resets the idle clock |
+| `timeout` | Positive milliseconds (optional) | Per-agent transport idle timeout used when `--timeout` is omitted; Claude-family runs also stop after 120 seconds without new text or distinct tool activity |
 | `permission` | `read-only`, `safe-edit` (default), `yolo` | `read-only` for investigation, `safe-edit` for workspace edits, or `yolo` to bypass approvals and sandboxing |
+
+For Claude-based transports (`claude`, `glm`, `kimi`, and `minimax`),
+`read-only` uses `dontAsk`, disables settings inheritance and session
+persistence, and exposes only `Read`, `Glob`, and `Grep`. It does not expose
+shell, write, plan-transition, task, network, or MCP tools; an empty strict MCP
+configuration prevents inherited MCP servers from reopening that surface. Use
+`safe-edit` for tasks that require any of those capabilities.
 
 ## MiniMax Configuration
 

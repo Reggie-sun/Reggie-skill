@@ -1,7 +1,7 @@
 ---
 run-agent: minimax
 model: MiniMax-M3
-effort: max
+effort: high
 permission: read-only
 ---
 

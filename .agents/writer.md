@@ -1,7 +1,7 @@
 ---
 run-agent: minimax
 model: MiniMax-M3
-effort: max
+effort: high
 timeout: 1800000
 permission: safe-edit
 ---

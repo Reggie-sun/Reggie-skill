@@ -52,6 +52,22 @@ def build_command(cli: str, prompt: str) -> tuple[str, list]:
     raise ValueError(f"Unsupported CLI {cli!r}. Choose one of: {SUPPORTED_CLIS_HELP}.")
 
 
+_CLAUDE_READ_ONLY_FLAGS = [
+    "--permission-mode",
+    "dontAsk",
+    "--tools",
+    "Read,Glob,Grep",
+    "--disallowedTools",
+    "Write,Edit,NotebookEdit,EnterPlanMode,ExitPlanMode,Task,Bash,mcp__*",
+    "--mcp-config",
+    "{}",
+    "--strict-mcp-config",
+    "--no-session-persistence",
+    "--setting-sources",
+    "",
+]
+
+
 _PERMISSION_MAPPING = {
     "codex": {
         "read-only": ["-s", "read-only"],
@@ -59,7 +75,7 @@ _PERMISSION_MAPPING = {
         "yolo": ["--dangerously-bypass-approvals-and-sandbox"],
     },
     "claude": {
-        "read-only": ["--permission-mode", "plan"],
+        "read-only": _CLAUDE_READ_ONLY_FLAGS,
         "safe-edit": ["--permission-mode", "acceptEdits"],
         "yolo": ["--dangerously-skip-permissions"],
     },

@@ -16,6 +16,8 @@ from _stream import StreamProcessor
 
 # SIGTERM may be reported as 143 or -15.
 _SUCCESS_EXIT_CODES = (0, 143, -15)
+_SEMANTIC_PROGRESS_CLIS = frozenset({"claude", "glm", "kimi", "minimax"})
+_MAX_STAGNATION_MS = 120_000
 
 
 def _partial_response(cli: str, result: dict | None, exit_code: int, error: str) -> dict:
@@ -123,15 +125,23 @@ def _timeout_payload(cli: str, processor: StreamProcessor, timeout_ms: int) -> d
     return _partial_response(cli, processor.get_partial_result(), 124, error)
 
 
+def _stagnation_payload(cli: str, processor: StreamProcessor, timeout_ms: int) -> dict:
+    error = (
+        f"Sub-agent stagnation timeout after {timeout_ms} ms without semantic progress. "
+        "Retry with a narrower task or lower reasoning effort."
+    )
+    return _partial_response(cli, processor.get_partial_result(), 124, error)
+
+
 def _signal_process_group(process: subprocess.Popen, sig: int) -> None:
-    if process.poll() is not None:
-        return
     try:
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         return
     except OSError:
         # Retain a best-effort fallback for unusual platforms/process launchers.
+        if process.poll() is not None:
+            return
         try:
             process.send_signal(sig)
         except ProcessLookupError:
@@ -179,6 +189,9 @@ def _drive_process(
         progress_stream = sys.stderr
     started_at = time.monotonic()
     idle_deadline = started_at + timeout_ms / 1000
+    stagnation_timeout_ms = _MAX_STAGNATION_MS
+    stagnation_deadline = started_at + stagnation_timeout_ms / 1000
+    enforce_stagnation = cli in _SEMANTIC_PROGRESS_CLIS
     next_heartbeat = started_at + heartbeat_sec
     processor = StreamProcessor(cli)
     stdout_lines: list = []
@@ -186,15 +199,19 @@ def _drive_process(
     line_q = _spawn_reader(process)
     saw_terminal = False
     last_progress_event = None
+    last_progress_revision = processor.get_progress_revision()
 
     try:
         while True:
             now = time.monotonic()
-            remaining = idle_deadline - now
+            active_deadline = min(idle_deadline, stagnation_deadline) if enforce_stagnation else idle_deadline
+            remaining = active_deadline - now
             if remaining <= 0:
                 _signal_process_group(process, signal.SIGKILL)
                 _drain_to_eof(line_q)
                 process.communicate()
+                if enforce_stagnation and stagnation_deadline <= idle_deadline:
+                    return _stagnation_payload(cli, processor, stagnation_timeout_ms)
                 return _timeout_payload(cli, processor, timeout_ms)
 
             try:
@@ -207,6 +224,11 @@ def _drive_process(
                     _drain_to_eof(line_q)
                     process.communicate()
                     return _timeout_payload(cli, processor, timeout_ms)
+                if enforce_stagnation and now >= stagnation_deadline:
+                    _signal_process_group(process, signal.SIGKILL)
+                    _drain_to_eof(line_q)
+                    process.communicate()
+                    return _stagnation_payload(cli, processor, stagnation_timeout_ms)
                 event, session_id = processor.get_progress()
                 _emit_progress(
                     progress_stream, cli, "heartbeat", event, started_at, session_id
@@ -234,6 +256,10 @@ def _drive_process(
             if not saw_terminal:
                 terminal = processor.process_line(line)
                 event, session_id = processor.get_progress()
+                progress_revision = processor.get_progress_revision()
+                if progress_revision != last_progress_revision:
+                    stagnation_deadline = time.monotonic() + stagnation_timeout_ms / 1000
+                    last_progress_revision = progress_revision
                 if event != last_progress_event:
                     _emit_progress(
                         progress_stream, cli, "activity", event, started_at, session_id

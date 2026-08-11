@@ -2,7 +2,14 @@
 
 When host policy selects the installed `sub-agents` runner, use this template with the project `writer` definition when present; otherwise use the host-global `writer` definition (`/home/reggie/.agents` on this installation). Do not override its configured MiniMax backend or model by default. If the external runner is unavailable, translate the same role, scope, authority, boundaries, and output contract to the harness's native writer dispatch.
 
-Do not override the writer's configured idle timeout with a shorter fixed wall timeout. Treat runner activity/heartbeat as liveness; an idle timeout returns partial text, session id, and last event for a context-preserving retry decision.
+Do not override the writer's configured transport idle timeout or the runner's
+semantic-stagnation deadline with a shorter wall timeout. A heartbeat proves
+the process is alive but does not prove semantic progress. Stay attached until
+the runner returns; Claude-family runs return exit `124` after 120 seconds
+without new text or a distinct tool event. Repeated identical heartbeat or
+`tool_result` labels must neither trigger an earlier manual interruption nor be
+reported as progress. A timeout returns partial text, session id, and last
+event for a context-preserving retry decision.
 
 Each invocation is fresh and stateless. For a fix, include the entire original task plus the current state and all review findings again.
 

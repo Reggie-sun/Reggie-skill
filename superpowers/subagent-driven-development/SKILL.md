@@ -57,7 +57,14 @@ Default role mapping:
 
 The installed definitions own their backend and model. On the configured MiniMax path they use `run-agent: minimax`; do not pass `--cli` or override the configured model unless your human partner or a higher-priority rule explicitly requires it.
 
-Let the selected definition own its idle timeout. The host-global maximum-effort `writer` uses 30 minutes; do not replace it with a hard-coded 10-minute wall timeout. Runner heartbeat/activity is evidence of liveness, and active work must not be declared stuck merely because no final report has arrived.
+Let the selected definition own its transport idle timeout. The host-global
+high-effort `writer` uses 30 minutes; do not replace it with a shorter wall
+timeout. A runner heartbeat proves only that the process is alive, not that the
+task is advancing. Stay attached until the runner returns a terminal result;
+Claude-family runs return exit `124` after 120 seconds without new text or a
+distinct tool event. Do not interrupt earlier merely because identical
+heartbeat or `tool_result` labels repeat, and do not call those repeats
+progress.
 
 Before the first dispatch:
 
@@ -180,7 +187,7 @@ Never:
 - Modify a dirty current tree when unrelated user work is present.
 - Let an external writer stage, commit, reset, clean, or revert by default.
 - Assume a fresh external invocation remembers a prior conversation.
-- Replace the writer's configured idle timeout with a shorter fixed wall deadline.
+- Replace the writer's configured transport idle timeout or the runner's semantic-stagnation deadline with a shorter fixed wall deadline.
 - Ask a subagent to infer the task from the plan instead of receiving full task text.
 - Skip spec or quality review, reverse their order, or skip re-review after fixes.
 - Treat self-review as a substitute for independent review.

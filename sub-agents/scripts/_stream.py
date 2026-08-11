@@ -82,6 +82,15 @@ class StreamProcessor:
         self.session_id = None
         self.partial_text_parts = []
         self.last_event = "started"
+        self.progress_revision = 0
+        self._semantic_events = set()
+
+    def _mark_semantic_progress(self, item: dict) -> None:
+        fingerprint = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+        if fingerprint in self._semantic_events:
+            return
+        self._semantic_events.add(fingerprint)
+        self.progress_revision += 1
 
     def _observe_data(self, data: dict) -> None:
         session_id = data.get("session_id") or data.get("sessionId")
@@ -109,14 +118,18 @@ class StreamProcessor:
             if item_type == "tool_use":
                 name = item.get("name")
                 self.last_event = f"tool:{name}" if isinstance(name, str) else "tool"
+                self._mark_semantic_progress(item)
             elif item_type == "tool_result":
                 self.last_event = "tool_result:error" if item.get("is_error") else "tool_result"
+                self._mark_semantic_progress(item)
             elif item_type == "thinking":
                 self.last_event = "thinking"
+                self._mark_semantic_progress(item)
             elif item_type == "text":
                 self.last_event = "assistant"
                 text = item.get("text")
                 if isinstance(text, str) and text.strip():
+                    self._mark_semantic_progress(item)
                     # Partial output is diagnostic context, not an unbounded transcript.
                     current_size = sum(len(part) for part in self.partial_text_parts)
                     if current_size < 64 * 1024:
@@ -260,6 +273,9 @@ class StreamProcessor:
 
     def get_progress(self) -> tuple[str, str | None]:
         return self.last_event, self.session_id
+
+    def get_progress_revision(self) -> int:
+        return self.progress_revision
 
 
 _LINE_PROCESSORS = {

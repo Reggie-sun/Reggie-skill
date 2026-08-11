@@ -14,9 +14,12 @@ fail-then-retry path, including:
 
 ## Timeout and progress
 
-- `--timeout` is an inactivity timeout, not a fixed wall-clock deadline.
+- `--timeout` is a transport inactivity timeout, not a fixed wall-clock deadline.
+- Claude-family runs also stop after 120 seconds without new text or distinct
+  tool activity; repeated identical heartbeats or tool results do not count as
+  progress.
 - Omit it to use the agent definition's `timeout`; otherwise the global default is `600000ms`.
-- The global `writer` on this host uses `1800000ms` for maximum-effort implementation.
+- The global `writer` on this host uses `1800000ms` with high-effort implementation.
 - Set the surrounding tool timeout high enough for the complete task; heartbeat output keeps the attached run observable.
 
 Long nested runs are normal. Keep the command attached until one terminal
