@@ -7,9 +7,7 @@ Use this template when dispatching a plan document reviewer subagent.
 **Dispatch after:** The complete plan is written.
 
 ```
-Task tool (general-purpose):
-  model: "gpt-5.4"
-  reasoning_effort: "high"
+Subagent (general-purpose):
   description: "Review plan document"
   prompt: |
     You are a plan document reviewer. Verify this plan is complete and ready for implementation.

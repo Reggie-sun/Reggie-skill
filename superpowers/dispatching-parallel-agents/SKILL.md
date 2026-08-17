@@ -13,12 +13,6 @@ When you have multiple unrelated failures (different test files, different subsy
 
 **Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
 
-## Model Requirement
-
-All Codex subagents dispatched by this skill MUST use `model: "gpt-5.4"` and
-`reasoning_effort: "high"`. Do not rely on inherited model defaults and do not
-choose cheaper or stronger models per task.
-
 ## When to Use
 
 ```dot
@@ -71,13 +65,16 @@ Each agent gets:
 
 ### 3. Dispatch in Parallel
 
-```typescript
-// In Codex, pass the fixed Superpowers subagent model on every spawn_agent call.
-spawn_agent({ message: "Fix agent-tool-abort.test.ts failures", model: "gpt-5.4", reasoning_effort: "high" })
-spawn_agent({ message: "Fix batch-completion-behavior.test.ts failures", model: "gpt-5.4", reasoning_effort: "high" })
-spawn_agent({ message: "Fix tool-approval-race-conditions.test.ts failures", model: "gpt-5.4", reasoning_effort: "high" })
-// All three run concurrently
+Issue all three subagent dispatches in the same response — they run in parallel:
+
+```text
+Subagent (general-purpose): "Fix agent-tool-abort.test.ts failures"
+Subagent (general-purpose): "Fix batch-completion-behavior.test.ts failures"
+Subagent (general-purpose): "Fix tool-approval-race-conditions.test.ts failures"
+# All three run concurrently.
 ```
+
+Multiple dispatch calls in one response = parallel execution. One per response = sequential.
 
 ### 4. Review and Integrate
 
@@ -161,15 +158,6 @@ Agent 3 → Fix tool-approval-race-conditions.test.ts
 
 **Integration:** All fixes independent, no conflicts, full suite green
 
-**Time saved:** 3 problems solved in parallel vs sequentially
-
-## Key Benefits
-
-1. **Parallelization** - Multiple investigations happen simultaneously
-2. **Focus** - Each agent has narrow scope, less context to track
-3. **Independence** - Agents don't interfere with each other
-4. **Speed** - 3 problems solved in time of 1
-
 ## Verification
 
 After agents return:
@@ -177,12 +165,3 @@ After agents return:
 2. **Check for conflicts** - Did agents edit same code?
 3. **Run full suite** - Verify all fixes work together
 4. **Spot check** - Agents can make systematic errors
-
-## Real-World Impact
-
-From debugging session (2025-10-03):
-- 6 failures across 3 files
-- 3 agents dispatched in parallel
-- All investigations completed concurrently
-- All fixes integrated successfully
-- Zero conflicts between agent changes

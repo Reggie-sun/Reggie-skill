@@ -7,8 +7,6 @@ description: Use when about to claim work is complete, fixed, or passing, before
 
 ## Overview
 
-Claiming work is complete without verification is dishonesty, not efficiency.
-
 **Core principle:** Evidence before claims, always.
 
 **Violating the letter of this rule is violating the spirit of this rule.**
@@ -19,7 +17,9 @@ Claiming work is complete without verification is dishonesty, not efficiency.
 NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE
 ```
 
-If you haven't run the verification command in this message, you cannot claim it passes.
+A claim may rely only on relevant verification that actually ran after every
+change that could affect the result and still matches the current
+working-tree/runtime state. Otherwise run it again before making the claim.
 
 ## The Gate Function
 
@@ -27,12 +27,13 @@ If you haven't run the verification command in this message, you cannot claim it
 BEFORE claiming any status or expressing satisfaction:
 
 1. IDENTIFY: What command proves this claim?
-2. RUN: Execute the FULL command (fresh, complete)
-3. READ: Full output, check exit code, count failures
-4. VERIFY: Does output confirm the claim?
+2. CHECK FRESHNESS: Did it run after every relevant change on this exact state?
+3. RUN IF NEEDED: Execute the FULL command when no fresh result exists
+4. READ: Full output, check exit code, count failures
+5. VERIFY: Does output confirm the claim?
    - If NO: State actual status with evidence
    - If YES: State claim WITH evidence
-5. ONLY THEN: Make the claim
+6. ONLY THEN: Make the claim
 
 Skip any step = lying, not verifying
 ```
@@ -105,15 +106,6 @@ Skip any step = lying, not verifying
 ❌ Trust agent report
 ```
 
-## Why This Matters
-
-From 24 failure memories:
-- your human partner said "I don't believe you" - trust broken
-- Undefined functions shipped - would crash
-- Missing requirements shipped - incomplete features
-- Time wasted on false completion → redirect → rework
-- Violates: "Honesty is a core value. If you lie, you'll be replaced."
-
 ## When To Apply
 
 **ALWAYS before:**
@@ -121,19 +113,13 @@ From 24 failure memories:
 - ANY expression of satisfaction
 - ANY positive statement about work state
 - Committing, PR creation, task completion
-- Moving to next task
-- Delegating to agents
+
+Delegation or moving between internal tasks is not itself a completion claim.
+Verify at the seam needed to keep downstream work credible, and always before
+making a success, fix, passing, commit, PR, or completion claim.
 
 **Rule applies to:**
 - Exact phrases
 - Paraphrases and synonyms
 - Implications of success
 - ANY communication suggesting completion/correctness
-
-## The Bottom Line
-
-**No shortcuts for verification.**
-
-Run the command. Read the output. THEN claim the result.
-
-This is non-negotiable.

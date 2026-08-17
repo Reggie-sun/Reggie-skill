@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SDD_DIR = REPO_ROOT / "superpowers" / "subagent-driven-development"
+REVIEW_DIR = REPO_ROOT / "superpowers" / "requesting-code-review"
 
 
 class MiniMaxSddRoutingTests(unittest.TestCase):
@@ -35,6 +36,14 @@ class MiniMaxSddRoutingTests(unittest.TestCase):
 
         self.assertFalse((SDD_DIR / "spec-reviewer-prompt.md").exists())
         self.assertFalse((SDD_DIR / "code-quality-reviewer-prompt.md").exists())
+
+        request_skill = (REVIEW_DIR / "SKILL.md").read_text(encoding="utf-8")
+        final_template = (REVIEW_DIR / "code-reviewer.md").read_text(encoding="utf-8")
+        self.assertIn("native named `reviewer` profile", request_skill)
+        self.assertNotIn("Dispatch a `general-purpose` subagent", request_skill)
+        self.assertIn("native named `reviewer` profile", final_template)
+        self.assertIn("agent_type: reviewer", final_template)
+        self.assertNotIn("local external adapter", final_template)
 
 
 if __name__ == "__main__":

@@ -1,104 +1,182 @@
 ---
 name: brainstorming
-description: "Use when product, UX, architecture, or feature intent is unresolved and materially different approaches need exploration; also use when the user explicitly asks to brainstorm, compare directions, or design before implementation. Do not use for scoped Lite implementation with settled behavior and acceptance criteria."
+description: "Use when product, UX, architecture, interfaces, contracts, tradeoffs, or scope remain materially unresolved, or when the user explicitly asks to brainstorm or design. Do not use for settled, bounded implementation."
 ---
 
 # Brainstorming Ideas Into Designs
 
-Help turn unresolved ideas into an approved design through natural collaborative dialogue.
+Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
 
-**Core principle:** Brainstorm when a decision is still open. Do not turn a settled, low-risk implementation into a design ceremony.
+Start by deciding whether a meaningful design decision is still open. If it
+is not, return control to the active workflow without creating an approval
+ceremony or artifact. Otherwise classify how much process the request needs,
+then work
+through your path: understand the context, refine the idea, present a
+design, and get your human partner's approval.
 
 ## Routing Gate
 
-Classify the repository lane before applying this skill when the repository defines one. Repository rules and an explicit user request take precedence.
-
-Use this skill when any of these is true:
-
-- The user explicitly asks to brainstorm, explore, compare approaches, or design.
-- Materially different product, UX, architecture, or feature directions remain unresolved.
-- Requirements are ambiguous enough that implementation could reasonably diverge from the user's intent.
-
-Do not use for scoped Lite implementation when all of these are true:
-
-- The user has already selected the expected behavior, placement, or acceptance criteria.
-- The change is localized and follows an existing repository pattern.
-- It does not introduce or change a stable API, schema, permission, runtime configuration, control-plane decision, or other durable contract.
-- A focused test and implementation can be completed safely in one pass.
-
-Examples that normally skip brainstorming: an approved copy change, a selected UI placement or layout adjustment, an exact local bug fix, or adding a help disclosure after its content and location were approved.
-
-If only one small detail is missing, ask one concise clarification instead of launching the full workflow.
+Use this skill when materially different product, UX, architecture,
+interface, contract, tradeoff, or scope choices could change the result, or
+when the user explicitly requests design exploration. Skip it when behavior
+and acceptance criteria are settled, the change follows an existing pattern,
+and implementation can be safely verified in one bounded pass. A missing
+minor detail calls for one focused clarification, not a full lifecycle.
 
 <HARD-GATE>
-After the Routing Gate says brainstorming applies, do NOT invoke an implementation skill, write code, scaffold a project, or take implementation action until you have presented the relevant design and the user has approved it.
+After the Routing Gate says brainstorming applies, do NOT invoke any
+implementation skill, write code, scaffold a project, or take implementation
+action until you have presented the relevant design and your human partner
+has approved it.
 </HARD-GATE>
+
+## Three Paths
+
+Before your first question, classify the request and say the
+classification out loud — "this looks bounded, so I'll present a short
+design here rather than write a spec" — so your human partner can
+override it:
+
+- **Spike** — a feasibility question ("can we...", "is it possible...",
+  "quick and dirty is fine") whose output is an answer, not code you
+  keep. Present the question and what you'll try in 2-3 sentences, get
+  a nod, then find out as cheaply as correctness allows. No design
+  doc, no spec file. Report findings as a recommendation; anything you
+  built stays labeled throwaway.
+- **Bounded** — a well-scoped change to code that already exists in
+  this repo: a new flag, a small endpoint, a one-file fix.
+  Understanding the kind of app is not enough — bounded means the flow
+  you are changing is already here to read. If there is no existing
+  flow to change, the task is not bounded. Ask the clarifying
+  questions that matter, present a short design IN CHAT (a few
+  sentences to a few short paragraphs), and STOP. Implementation
+  starts only after your human partner says yes to that design — a
+  bounded task's approval is as hard a gate as an architectural
+  one. No spec file, no implementation plan document.
+- **Architectural** — new projects, new subsystems, changes that
+  restructure how components fit together or alter interfaces others
+  depend on. Follow the full process: questions, approaches, sectioned
+  design, and a written spec. Then return control to the active workflow so
+  it can choose Native Codex or a full workflow from the remaining risk.
+
+When in doubt between two paths, take the heavier one. The ratchet is
+one-way: hidden complexity discovered mid-task upgrades the path —
+stop, say so, and step up. Nothing downgrades mid-task.
 
 ## Small Does Not Decide The Route
 
-A small request can still need brainstorming when a meaningful product choice is unresolved. A small request with settled intent and a safe Lite implementation does not.
+A small request can still need brainstorming when a meaningful decision is
+open. A small request with settled intent does not. Once this skill's Routing
+Gate applies, every selected path ends with approval before implementation;
+the artifact scales with the uncertainty.
+
+## Red Flags
+
+| Thought | Reality |
+|---------|---------|
+| "The task mentions code, so brainstorming owns it" | Coding alone is not a trigger; the Routing Gate requires a meaningful unresolved decision. |
+| "I'll call it bounded despite an unresolved contract" | Stable-boundary uncertainty is architectural; take the heavier path. |
+| "The Routing Gate applies, but the design is obvious" | Present the design and wait for approval once this skill actually applies. |
+| "I understand this kind of app, so it's bounded" | Bounded measures the repo, not your familiarity. A new project has no existing flow — it is architectural. |
+| "The spike works, so I'll keep the code" | A spike's output is an answer. Keeping the code is a new request — classify it. |
+| "It grew, but I'm almost done — no need to re-classify" | Hidden complexity upgrades the path mid-task. Stop and say so. |
+| "They approved the spike, so the follow-up change is approved too" | Route the follow-up separately; approval does not silently expand scope. |
 
 ## Checklist
 
-When the Routing Gate applies, create tasks for the applicable items and complete them in order:
+Classify first, announce the path, then create a task for each item on
+your path and complete them in order.
 
+**Spike:**
+1. **Explore project context** — enough to frame the probe
+2. **Present question + probe plan** — 2-3 sentences
+3. **Get approval** — a nod is enough
+4. **Investigate** — as cheaply as correctness allows
+5. **Report findings** — a recommendation; label anything built as throwaway
+
+**Bounded:**
 1. **Explore project context** — check files, docs, recent commits
-2. **Offer visual companion** (if topic will involve visual questions) — this is its own message, not combined with a clarifying question. See the Visual Companion section below.
+2. **Ask clarifying questions** — one at a time, the ones that matter
+3. **Present short design in chat** — approach, files touched, testing
+4. **Get approval** — STOP and wait for an explicit yes; presenting the design and starting in the same breath is skipping the gate
+5. **Implement** — proceed with the normal development workflow and proportional verification; no plan document
+
+**Architectural:**
+1. **Explore project context** — check files, docs, recent commits
+2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
 3. **Ask clarifying questions** — one at a time, understand purpose/constraints/success criteria
 4. **Propose 2-3 approaches** — with trade-offs and your recommendation
 5. **Present design** — in sections scaled to their complexity, get user approval after each section
-6. **Decide whether a durable spec is required** — write one when repository rules require it, the user requests it, or the approved work is Standard/Heavy
-7. **Review any written spec** — check placeholders, contradictions, ambiguity, and scope
-8. **Transition by lane** — implement Lite work directly with the relevant implementation discipline; invoke writing-plans only for Standard/Heavy or genuinely multi-step work
+6. **Write design doc** — save to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`; follow the active repository commit policy
+7. **Spec self-review** — quick inline check for placeholders, contradictions, ambiguity, scope (see below)
+8. **User reviews written spec** — ask user to review the spec file before proceeding
+9. **Return control** — let the active workflow decide whether Native Codex,
+   a lightweight plan, or an escalated workflow best fits the remaining work
 
 ## Process Flow
 
 ```dot
 digraph brainstorming {
+    "Classify: spike / bounded / architectural" [shape=diamond];
+    "Present question + probe (2-3 sentences)" [shape=box];
+    "Ask clarifying questions (bounded)" [shape=box];
+    "Present short design in chat" [shape=box];
+    "Human approves?" [shape=diamond];
+    "Investigate; report recommendation" [shape=doublecircle];
+    "Implement via normal workflow (no plan doc)" [shape=doublecircle];
     "Explore project context" [shape=box];
-    "Visual questions ahead?" [shape=diamond];
-    "Offer Visual Companion\n(own message, no other content)" [shape=box];
     "Ask clarifying questions" [shape=box];
     "Propose 2-3 approaches" [shape=box];
     "Present design sections" [shape=box];
     "User approves design?" [shape=diamond];
-    "Durable spec required?" [shape=diamond];
     "Write design doc" [shape=box];
     "Spec self-review\n(fix inline)" [shape=box];
     "User reviews spec?" [shape=diamond];
-    "Classify execution lane" [shape=diamond];
-    "Implement Lite change" [shape=doublecircle];
-    "Invoke writing-plans skill" [shape=doublecircle];
+    "Return to active workflow" [shape=doublecircle];
+    "Hidden complexity? Upgrade path" [shape=box];
 
-    "Explore project context" -> "Visual questions ahead?";
-    "Visual questions ahead?" -> "Offer Visual Companion\n(own message, no other content)" [label="yes"];
-    "Visual questions ahead?" -> "Ask clarifying questions" [label="no"];
-    "Offer Visual Companion\n(own message, no other content)" -> "Ask clarifying questions";
+    "Classify: spike / bounded / architectural" -> "Present question + probe (2-3 sentences)" [label="spike"];
+    "Classify: spike / bounded / architectural" -> "Ask clarifying questions (bounded)" [label="bounded"];
+    "Classify: spike / bounded / architectural" -> "Explore project context" [label="architectural"];
+    "Present question + probe (2-3 sentences)" -> "Human approves?";
+    "Ask clarifying questions (bounded)" -> "Present short design in chat";
+    "Present short design in chat" -> "Human approves?";
+    "Human approves?" -> "Investigate; report recommendation" [label="spike: yes"];
+    "Human approves?" -> "Implement via normal workflow (no plan doc)" [label="bounded: yes"];
+    "Hidden complexity? Upgrade path" -> "Classify: spike / bounded / architectural";
+    "Explore project context" -> "Ask clarifying questions";
     "Ask clarifying questions" -> "Propose 2-3 approaches";
     "Propose 2-3 approaches" -> "Present design sections";
     "Present design sections" -> "User approves design?";
     "User approves design?" -> "Present design sections" [label="no, revise"];
-    "User approves design?" -> "Durable spec required?" [label="yes"];
-    "Durable spec required?" -> "Write design doc" [label="yes"];
-    "Durable spec required?" -> "Classify execution lane" [label="no"];
+    "User approves design?" -> "Write design doc" [label="yes"];
     "Write design doc" -> "Spec self-review\n(fix inline)";
     "Spec self-review\n(fix inline)" -> "User reviews spec?";
     "User reviews spec?" -> "Write design doc" [label="changes requested"];
-    "User reviews spec?" -> "Classify execution lane" [label="approved"];
-    "Classify execution lane" -> "Implement Lite change" [label="Lite"];
-    "Classify execution lane" -> "Invoke writing-plans skill" [label="Standard/Heavy"];
+    "User reviews spec?" -> "Return to active workflow" [label="approved"];
 }
 ```
 
-The terminal state depends on the execution lane. Brainstorming does not itself require a spec or implementation plan.
+**Terminal states are path-bound.** Architectural: return the approved spec
+to the active workflow for a fresh risk-based routing decision. Do not
+activate another workflow merely because brainstorming produced a spec.
+Bounded: after approval, implementation proceeds directly through the normal
+development workflow; no plan document. Spike: the terminal state is a
+reported recommendation.
 
 ## The Process
+
+The subsections below serve the bounded and architectural paths (a
+spike stops at "present the probe, get a nod"). Sections from
+**Exploring approaches** onward are architectural-path depth — for
+bounded work, context plus a few questions plus a short in-chat design
+is the whole process.
 
 **Understanding the idea:**
 
 - Check out the current project state first (files, docs, recent commits)
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
-- If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
+- If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec, followed by a fresh risk-based workflow choice and implementation.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
 - Prefer multiple choice questions when possible, but open-ended is fine too
 - Only one question per message - if a topic needs more exploration, break it into multiple questions
@@ -109,6 +187,7 @@ The terminal state depends on the execution lane. Brainstorming does not itself 
 - Propose 2-3 different approaches with trade-offs
 - Present options conversationally with your recommendation and reasoning
 - Lead with your recommended option and explain why
+- YAGNI ruthlessly - remove unnecessary features from every approach and design
 
 **Presenting the design:**
 
@@ -131,17 +210,17 @@ The terminal state depends on the execution lane. Brainstorming does not itself 
 - Where existing code has problems that affect the work (e.g., a file that's grown too large, unclear boundaries, tangled responsibilities), include targeted improvements as part of the design - the way a good developer improves code they're working in.
 - Don't propose unrelated refactoring. Stay focused on what serves the current goal.
 
-## After the Design
+## After the Design (architectural path)
 
 **Documentation:**
 
-- Write the validated design to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md` only when repository rules require a durable spec, the user requests one, or the approved work is Standard/Heavy.
+- Write the validated design (spec) to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`
   - (User preferences for spec location override this default)
 - Use elements-of-style:writing-clearly-and-concisely skill if available
-- If a design document is created, commit it when repository rules require commits.
+- Follow the active repository commit policy; this skill does not independently authorize a commit
 
 **Spec Self-Review:**
-After writing a spec document, look at it with fresh eyes:
+After writing the spec document, look at it with fresh eyes:
 
 1. **Placeholder scan:** Any "TBD", "TODO", incomplete sections, or vague requirements? Fix them.
 2. **Internal consistency:** Do any sections contradict each other? Does the architecture match the feature descriptions?
@@ -151,34 +230,27 @@ After writing a spec document, look at it with fresh eyes:
 Fix any issues inline. No need to re-review — just fix and move on.
 
 **User Review Gate:**
-When a spec was required, ask the user to review it after the self-review loop:
+After the spec review loop passes, ask the user to review the written spec before proceeding:
 
-> "Spec written and committed to `<path>`. Please review it and let me know if you want to make any changes before we start writing out the implementation plan."
+> "Spec written to `<path>`. Please review it and let me know if you want to make any changes before we choose the implementation route."
 
 Wait for the user's response. If they request changes, make them and re-run the spec review loop. Only proceed once the user approves.
 
 **Implementation:**
 
-- For Lite work with settled acceptance criteria, proceed directly to the relevant implementation and verification discipline.
-- For Standard/Heavy or genuinely multi-step work, invoke writing-plans to create a detailed implementation plan.
-
-## Key Principles
-
-- **One question at a time** - Don't overwhelm with multiple questions
-- **Multiple choice preferred** - Easier to answer than open-ended when possible
-- **YAGNI ruthlessly** - Remove unnecessary features from all designs
-- **Explore alternatives** - Always propose 2-3 approaches before settling
-- **Incremental validation** - Present design, get approval before moving on
-- **Be flexible** - Go back and clarify when something doesn't make sense
+- Return control to the active workflow.
+- Use `writing-plans` only when the user explicitly requested a durable plan,
+  or the remaining risk, duration, coordination, or sequencing justifies it.
+- Otherwise continue with Native Codex and proportional verification.
 
 ## Visual Companion
 
 A browser-based companion for showing mockups, diagrams, and visual options during brainstorming. Available as a tool — not a mode. Accepting the companion means it's available for questions that benefit from visual treatment; it does NOT mean every question goes through the browser.
 
-**Offering the companion:** When you anticipate that upcoming questions will involve visual content (mockups, layouts, diagrams), offer it once for consent:
-> "Some of what we're working on might be easier to explain if I can show it to you in a web browser. I can put together mockups, diagrams, comparisons, and other visuals as we go. This feature is still new and can be token-intensive. Want to try it? (Requires opening a local URL)"
+**Offering the companion (just-in-time):** Do NOT offer it upfront. Wait until a question would genuinely be clearer shown than told — a real mockup / layout / diagram question, not merely a UI *topic*. The first time that happens, offer it then, as its own message:
+> "This next part might be easier if I show you — I can put together mockups, diagrams, and comparisons in a browser tab as we go. It's still new and can be token-intensive. Want me to? I'll open it for you."
 
-**This offer MUST be its own message.** Do not combine it with clarifying questions, context summaries, or any other content. The message should contain ONLY the offer above and nothing else. Wait for the user's response before continuing. If they decline, proceed with text-only brainstorming.
+**This offer MUST be its own message.** Only the offer — no clarifying question, summary, or other content. Wait for the user's response. If they accept, start the server with `--open` so their browser opens to the first screen automatically. If they decline, continue text-only and don't offer again unless they raise it.
 
 **Per-question decision:** Even after the user accepts, decide FOR EACH QUESTION whether to use the browser or the terminal. The test: **would the user understand this better by seeing it than reading it?**
 
