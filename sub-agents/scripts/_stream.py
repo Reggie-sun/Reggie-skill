@@ -86,7 +86,12 @@ class StreamProcessor:
         self._semantic_events = set()
 
     def _mark_semantic_progress(self, item: dict) -> None:
-        fingerprint = json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
+        semantic_item = {
+            key: value for key, value in item.items() if key not in ("id", "tool_use_id")
+        }
+        fingerprint = json.dumps(
+            semantic_item, sort_keys=True, ensure_ascii=False, default=str
+        )
         if fingerprint in self._semantic_events:
             return
         self._semantic_events.add(fingerprint)

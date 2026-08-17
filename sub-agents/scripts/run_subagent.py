@@ -49,6 +49,24 @@ def main() -> None:
         ),
     )
     parser.add_argument("--cli", help=f"Force specific CLI ({SUPPORTED_CLIS_HELP})")
+    parser.add_argument(
+        "--allow-command",
+        action="append",
+        default=[],
+        help=(
+            "Exact Bash command to authorize for a Claude-family safe-edit agent; "
+            "repeat for multiple commands"
+        ),
+    )
+    parser.add_argument(
+        "--allow-path",
+        action="append",
+        default=[],
+        help=(
+            "File or directory pattern relative to --cwd that a Claude-family "
+            "safe-edit agent may edit; repeat for multiple ownership paths"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -101,6 +119,8 @@ def main() -> None:
         permission=permission,
         model=model,
         effort=effort,
+        allowed_commands=tuple(args.allow_command),
+        allowed_paths=tuple(args.allow_path),
     )
 
     try:

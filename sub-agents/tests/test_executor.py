@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import signal
 import subprocess
@@ -16,7 +15,8 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _executor import _drive_process, _spawn_and_drive  # noqa: E402
+from _builder import AgentInvocation  # noqa: E402
+from _executor import _drive_process, _spawn_and_drive, execute_agent  # noqa: E402
 
 
 def _python_process(source: str) -> subprocess.Popen:
@@ -39,6 +39,7 @@ def _drive_test_process(
     *,
     cli: str = "claude",
     timeout_ms: int = 100,
+    semantic_timeout_ms: int | None = None,
 ) -> dict:
     process = _python_process(source)
     try:
@@ -48,6 +49,7 @@ def _drive_test_process(
             timeout_ms=timeout_ms,
             heartbeat_sec=0.02,
             progress_stream=progress,
+            semantic_timeout_ms=semantic_timeout_ms,
         )
     finally:
         if process.poll() is None:
@@ -56,6 +58,26 @@ def _drive_test_process(
 
 
 class ExecutorLivenessTests(unittest.TestCase):
+    def test_safe_edit_uses_configured_timeout_as_semantic_cap(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="implement",
+            cwd="/tmp",
+            permission="safe-edit",
+            allowed_paths=("owned.py",),
+        )
+
+        with (
+            patch(
+                "_executor.build_invocation_args",
+                return_value=("claude", ["-p", "implement"], None),
+            ),
+            patch("_executor._spawn_and_drive", return_value={"status": "success"}) as spawn,
+        ):
+            execute_agent(invocation, timeout_ms=1_800_000)
+
+        self.assertEqual(spawn.call_args.kwargs["semantic_timeout_ms"], 1_800_000)
+
     def test_activity_extends_idle_timeout_and_emits_progress(self) -> None:
         source = """
 import json
@@ -116,6 +138,35 @@ time.sleep(2)
         self.assertEqual(result["exit_code"], 124)
         self.assertIn("stagnation", result["error"].lower())
 
+    def test_repeated_denial_with_new_tool_ids_does_not_extend_stagnation(self) -> None:
+        source = """
+import json
+import time
+for index in range(10):
+    event = {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": f"tool-{index}",
+                    "is_error": True,
+                    "content": "Permission denied",
+                }
+            ]
+        },
+    }
+    print(json.dumps(event), flush=True)
+    time.sleep(0.04)
+time.sleep(2)
+"""
+
+        with patch("_executor._MAX_STAGNATION_MS", 100):
+            result = _drive_test_process(source, io.StringIO(), timeout_ms=1_000)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("stagnation", result["error"].lower())
+
     def test_transport_timeout_does_not_shorten_stagnation_deadline(self) -> None:
         source = """
 import json
@@ -149,7 +200,11 @@ for index in range(5):
         "type": "user",
         "message": {
             "content": [
-                {"type": "tool_result", "tool_use_id": f"tool-{index}", "content": "ok"}
+                {
+                    "type": "tool_result",
+                    "tool_use_id": f"tool-{index}",
+                    "content": f"step {index} complete",
+                }
             ]
         },
     }
@@ -183,6 +238,26 @@ print(json.dumps({"type": "turn.completed"}), flush=True)
             )
 
         self.assertEqual(result["status"], "success")
+
+    def test_writer_can_finish_long_running_tool_without_semantic_events(self) -> None:
+        source = """
+import json
+import time
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": "tool-1", "input": {"command": "pytest"}}]}}), flush=True)
+time.sleep(0.2)
+print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
+"""
+
+        with patch("_executor._MAX_STAGNATION_MS", 50):
+            result = _drive_test_process(
+                source,
+                io.StringIO(),
+                timeout_ms=1_000,
+                semantic_timeout_ms=1_000,
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["result"], "DONE")
 
     def test_timeout_kills_the_entire_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

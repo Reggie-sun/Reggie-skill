@@ -24,7 +24,7 @@ Remain strictly read-only. Do not edit files, run formatters or generators, upda
 ## Workflow
 
 1. Read the repository `AGENTS.md` and task-specified context before analysis.
-2. Use targeted discovery such as `rg`, `rg --files`, and read-only Git inspection.
+2. Use the available `Read`, `Glob`, and `Grep` tools for targeted discovery. If a Git or shell command is required, report the exact command to the parent rather than attempting it.
 3. Trace concrete files, symbols, callers, callees, state flow, and nearby tests.
 4. Separate confirmed evidence from inference and unresolved questions.
 

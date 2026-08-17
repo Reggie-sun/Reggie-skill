@@ -184,14 +184,20 @@ def _drive_process(
     heartbeat_sec: float = 30.0,
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
+    semantic_timeout_ms: int | None = None,
 ) -> dict:
     if progress_stream is None:
         progress_stream = sys.stderr
     started_at = time.monotonic()
     idle_deadline = started_at + timeout_ms / 1000
-    stagnation_timeout_ms = _MAX_STAGNATION_MS
+    if semantic_timeout_ms is None:
+        stagnation_timeout_ms = (
+            _MAX_STAGNATION_MS if cli in _SEMANTIC_PROGRESS_CLIS else 0
+        )
+    else:
+        stagnation_timeout_ms = semantic_timeout_ms
     stagnation_deadline = started_at + stagnation_timeout_ms / 1000
-    enforce_stagnation = cli in _SEMANTIC_PROGRESS_CLIS
+    enforce_stagnation = stagnation_timeout_ms > 0
     next_heartbeat = started_at + heartbeat_sec
     processor = StreamProcessor(cli)
     stdout_lines: list = []
@@ -323,6 +329,7 @@ def _spawn_and_drive(
     heartbeat_sec: float = 30.0,
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
+    semantic_timeout_ms: int | None = None,
 ) -> dict:
     try:
         # Prevent CLIs from waiting for interactive input.
@@ -357,6 +364,7 @@ def _spawn_and_drive(
         heartbeat_sec=heartbeat_sec,
         progress_stream=progress_stream,
         max_stdout_chars=max_stdout_chars,
+        semantic_timeout_ms=semantic_timeout_ms,
     )
 
 
@@ -394,4 +402,12 @@ def execute_agent(inv: AgentInvocation, timeout_ms: int = DEFAULT_TIMEOUT_MS) ->
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     proc_env = _build_proc_env(env_override)
-    return _spawn_and_drive(command, args, proc_env, inv.cwd, inv.cli, timeout_ms)
+    return _spawn_and_drive(
+        command,
+        args,
+        proc_env,
+        inv.cwd,
+        inv.cli,
+        timeout_ms,
+        semantic_timeout_ms=timeout_ms if inv.permission == "safe-edit" else None,
+    )

@@ -19,6 +19,8 @@ class AgentInvocation:
     permission: str = DEFAULT_PERMISSION
     model: str | None = None
     effort: str | None = None
+    allowed_commands: tuple[str, ...] = ()
+    allowed_paths: tuple[str, ...] = ()
 
 
 def build_command(cli: str, prompt: str) -> tuple[str, list]:
@@ -60,7 +62,22 @@ _CLAUDE_READ_ONLY_FLAGS = [
     "--disallowedTools",
     "Write,Edit,NotebookEdit,EnterPlanMode,ExitPlanMode,Task,Bash,mcp__*",
     "--mcp-config",
-    "{}",
+    '{"mcpServers":{}}',
+    "--strict-mcp-config",
+    "--no-session-persistence",
+    "--setting-sources",
+    "",
+]
+
+_CLAUDE_SAFE_EDIT_FLAGS = [
+    "--permission-mode",
+    "dontAsk",
+    "--tools",
+    "Read,Glob,Grep,Write,Edit",
+    "--disallowedTools",
+    "NotebookEdit,EnterPlanMode,ExitPlanMode,Task,Agent,WebFetch,WebSearch,mcp__*",
+    "--mcp-config",
+    '{"mcpServers":{}}',
     "--strict-mcp-config",
     "--no-session-persistence",
     "--setting-sources",
@@ -76,7 +93,7 @@ _PERMISSION_MAPPING = {
     },
     "claude": {
         "read-only": _CLAUDE_READ_ONLY_FLAGS,
-        "safe-edit": ["--permission-mode", "acceptEdits"],
+        "safe-edit": _CLAUDE_SAFE_EDIT_FLAGS,
         "yolo": ["--dangerously-skip-permissions"],
     },
     "gemini": {
@@ -146,6 +163,47 @@ def effort_flags(cli: str, effort: str | None) -> list:
 
 def _invocation_flags(inv: AgentInvocation) -> list:
     flags = permission_flags(inv.cli, inv.permission)
+    claude_family = inv.cli in ("claude", "glm", "kimi", "minimax")
+    if inv.permission == "safe-edit" and claude_family and not inv.allowed_paths:
+        raise ValueError(
+            "Claude-family safe-edit requires at least one explicit --allow-path."
+        )
+    if inv.allowed_commands or inv.allowed_paths:
+        if inv.permission != "safe-edit" or not claude_family:
+            raise ValueError(
+                "Explicit allowed commands and paths require a Claude-family safe-edit invocation."
+            )
+        allowed_rules = []
+        cwd = Path(inv.cwd).resolve()
+        for allowed_path in inv.allowed_paths:
+            relative = Path(allowed_path)
+            if (
+                not allowed_path.strip()
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or any(char in allowed_path for char in ("\n", "\r", ")"))
+            ):
+                raise ValueError(
+                    f"Invalid allowed path {allowed_path!r}: use a non-empty path relative "
+                    "to the working directory without '..' or ')'."
+                )
+            resolved = (cwd / relative).resolve()
+            if not resolved.is_relative_to(cwd):
+                raise ValueError(
+                    f"Invalid allowed path {allowed_path!r}: path resolves outside the "
+                    "working directory."
+                )
+            allowed_rules.append(f"Edit({relative.as_posix()})")
+        for command in inv.allowed_commands:
+            if not command.strip() or any(char in command for char in ("\n", "\r", ")")):
+                raise ValueError(
+                    f"Invalid allowed command {command!r}: commands must be non-empty single lines "
+                    "without ')'."
+                )
+            allowed_rules.append(f"Bash({command})")
+        if inv.allowed_commands:
+            flags[flags.index("--tools") + 1] += ",Bash"
+        flags.extend(["--allowedTools", *allowed_rules])
     if inv.model:
         flags.extend(["--model", inv.model])
     flags.extend(effort_flags(inv.cli, inv.effort))
@@ -217,6 +275,7 @@ def _build_opencode_args(inv: AgentInvocation) -> tuple[str, list, dict | None]:
 _GLM_BASE_URL = "https://api.z.ai/api/anthropic"
 _KIMI_BASE_URL = "https://api.kimi.com/coding/"
 _MINIMAX_BASE_URL = "https://api.minimax.io/anthropic"
+_MINIMAX_MAINLAND_BASE_URL = "https://api.minimaxi.com/anthropic"
 _MINIMAX_DEFAULT_MODEL = "MiniMax-M3"
 _DEFAULT_CREDENTIALS_FILE = Path.home() / ".config" / "sub-agents" / "credentials.env"
 
@@ -326,7 +385,14 @@ def _build_minimax_args(inv: AgentInvocation) -> tuple[str, list, dict | None]:
             "A MiniMax API key is required before retrying."
         )
 
-    base_url = os.environ.get("MINIMAX_BASE_URL", "").strip() or _MINIMAX_BASE_URL
+    configured_base_url = os.environ.get("MINIMAX_BASE_URL", "").strip()
+    if configured_base_url:
+        base_url = configured_base_url
+    elif api_key.startswith("sk-cp-"):
+        # MiniMax Coding Plan keys are issued for the Mainland endpoint.
+        base_url = _MINIMAX_MAINLAND_BASE_URL
+    else:
+        base_url = _MINIMAX_BASE_URL
     model = os.environ.get("MINIMAX_MODEL", "").strip() or _MINIMAX_DEFAULT_MODEL
     command, args, env_override = _build_redirected_claude_args(
         inv, api_key, base_url, "ANTHROPIC_AUTH_TOKEN"

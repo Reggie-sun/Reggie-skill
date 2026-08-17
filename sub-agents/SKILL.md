@@ -28,6 +28,8 @@ Extract parameters from user's natural language request:
 | `--cwd` | Current working directory (absolute path) |
 | `--cli` | Backend override explicitly requested by the user; otherwise omit |
 | `--timeout` | Idle timeout explicitly requested by the user, converted to milliseconds; otherwise omit so the agent definition or global default applies |
+| `--allow-command` | Exact Bash command explicitly authorized for a Claude-family `safe-edit` agent; repeat once per command |
+| `--allow-path` | File or directory pattern relative to `--cwd` that a Claude-family `safe-edit` agent may edit; repeat once per ownership path |
 
 **Example**:
 "Run code-reviewer on src/"
@@ -82,6 +84,12 @@ python3 {SKILL_DIR}/scripts/run_subagent.py \
 
 Append `--cli <backend>` when the user specifies a backend. Append
 `--timeout <milliseconds>` when the user specifies a timeout.
+For a Claude-family `safe-edit` agent, append one `--allow-command <exact command>`
+per authorized test or Git command. The runner exposes no Bash tool when this
+list is empty, and rejects every Bash command not listed exactly.
+Append one `--allow-path <relative path>` per owned file or directory pattern;
+at least one is required for `safe-edit`, and edits outside those paths are
+denied non-interactively.
 
 ### Step 3: Handle Response
 
@@ -151,15 +159,21 @@ How results should be structured.
 | `run-agent` | `codex`, `claude`, `cursor-agent`, `glm`, `kimi`, `minimax`, `grok`, `gemini`, `opencode` | Which CLI executes this agent |
 | `model` | Backend-specific model name (optional) | Model passed to the selected CLI; omit to use its configured default |
 | `effort` | Backend/model-specific reasoning level or OpenCode variant (optional) | Advanced: forwarded as an opaque value. Confirm support for the selected model before setting; omit to use its default. MiniMax uses Claude CLI's `--effort`; unsupported on `cursor-agent` and `gemini` |
-| `timeout` | Positive milliseconds (optional) | Per-agent transport idle timeout used when `--timeout` is omitted; Claude-family runs also stop after 120 seconds without new text or distinct tool activity |
+| `timeout` | Positive milliseconds (optional) | Per-agent transport idle timeout used when `--timeout` is omitted; read-only Claude-family runs also stop after 120 seconds without semantic progress, while safe-edit uses this configured timeout as its semantic-stagnation cap |
 | `permission` | `read-only`, `safe-edit` (default), `yolo` | `read-only` for investigation, `safe-edit` for workspace edits, or `yolo` to bypass approvals and sandboxing |
 
 For Claude-based transports (`claude`, `glm`, `kimi`, and `minimax`),
 `read-only` uses `dontAsk`, disables settings inheritance and session
 persistence, and exposes only `Read`, `Glob`, and `Grep`. It does not expose
 shell, write, plan-transition, task, network, or MCP tools; an empty strict MCP
-configuration prevents inherited MCP servers from reopening that surface. Use
-`safe-edit` for tasks that require any of those capabilities.
+configuration prevents inherited MCP servers from reopening that surface.
+`safe-edit` uses `dontAsk` and likewise disables inherited settings, sessions,
+nested-agent, network, plan-transition, and MCP tools. It exposes `Read`,
+`Glob`, `Grep`, `Write`, and `Edit`, but only repeated `--allow-path` rules
+approve edits; Bash appears only when at least one exact `--allow-command` is
+supplied. Use repeated flags for explicit ownership, focused tests, and
+task-only Git commands the parent has authorized. Do not use `yolo` as a
+workaround for a missing path or command grant.
 
 ## MiniMax Configuration
 
@@ -167,5 +181,5 @@ The `minimax` backend uses Claude CLI with MiniMax's Anthropic-compatible API.
 
 - Set `MINIMAX_API_KEY`; `CLI_API_KEY` remains a legacy fallback. Environment variables take precedence over saved credentials.
 - To persist credentials, store `MINIMAX_API_KEY=<key>` in `~/.config/sub-agents/credentials.env` with mode `600`. Set `SUB_AGENTS_CREDENTIALS_FILE` to override this path.
-- The default endpoint is `https://api.minimax.io/anthropic`. For Mainland China, set `MINIMAX_BASE_URL=https://api.minimaxi.com/anthropic`.
+- The default endpoint is `https://api.minimax.io/anthropic`. Coding Plan keys with the `sk-cp-` prefix automatically use `https://api.minimaxi.com/anthropic`; set `MINIMAX_BASE_URL` only to override endpoint selection explicitly.
 - The default model is `MiniMax-M3`. Set `model` in the agent frontmatter or `MINIMAX_MODEL` to override it.
