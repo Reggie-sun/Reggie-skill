@@ -13,7 +13,11 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _dialogue import build_dialogue_context, normalize_dialogue_result  # noqa: E402
+from _dialogue import (  # noqa: E402
+    build_dialogue_context,
+    dialogue_json_schema,
+    normalize_dialogue_result,
+)
 from run_subagent import main  # noqa: E402
 
 
@@ -27,6 +31,64 @@ def _transport_result(text: str) -> dict:
 
 
 class DialogueResultTests(unittest.TestCase):
+    def test_structured_output_is_normalized_without_xml_envelope(self) -> None:
+        result = {
+            "result": "",
+            "structured_output": {
+                "status": "DONE_WITH_CONCERNS",
+                "summary": "Mapped the lifecycle",
+                "result": "Detailed read-only findings.",
+                "questions": [],
+                "state_file": None,
+                "concerns": ["Parent verification required"],
+            },
+            "exit_code": 0,
+            "status": "success",
+            "cli": "minimax",
+        }
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "DONE_WITH_CONCERNS")
+        self.assertEqual(normalized["result"], "Detailed read-only findings.")
+        self.assertEqual(normalized["summary"], "Mapped the lifecycle")
+        self.assertEqual(normalized["concerns"], ["Parent verification required"])
+        self.assertEqual(normalized["terminal_protocol"], "structured_output")
+        self.assertNotIn("structured_output", normalized)
+
+    def test_structured_output_contradictions_and_shape_fail_closed(self) -> None:
+        valid = {
+            "status": "DONE",
+            "summary": "Mapped",
+            "result": "Detailed findings.",
+            "questions": [],
+            "state_file": None,
+            "concerns": [],
+        }
+        cases = (
+            ({**valid, "concerns": ["Hidden concern"]}, "DONE_WITH_CONCERNS"),
+            ({key: value for key, value in valid.items() if key != "result"}, "missing"),
+            ({**valid, "extra": "not allowed"}, "unexpected"),
+        )
+
+        for structured_output, error_fragment in cases:
+            with self.subTest(error_fragment=error_fragment):
+                normalized = normalize_dialogue_result(
+                    {
+                        "result": "",
+                        "structured_output": structured_output,
+                        "exit_code": 0,
+                        "status": "success",
+                        "cli": "minimax",
+                    },
+                    "/tmp",
+                )
+
+                self.assertEqual(normalized["status"], "error")
+                self.assertEqual(normalized["agent_status"], "PROTOCOL_ERROR")
+                self.assertIn(error_fragment, normalized["error"])
+
     def test_needs_context_exposes_questions_and_normalized_state_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_file = Path(temp_dir) / "reports" / "task.md"
@@ -153,6 +215,23 @@ class DialogueResultTests(unittest.TestCase):
 
 
 class DialogueContextTests(unittest.TestCase):
+    def test_structured_dialogue_context_and_schema_require_report_fields(self) -> None:
+        context = build_dialogue_context(
+            "Writer rules",
+            "/tmp",
+            [],
+            structured_output=True,
+        )
+        schema = __import__("json").loads(dialogue_json_schema())
+
+        self.assertIn("structured output", context.lower())
+        self.assertNotIn("<subagent_result>", context)
+        self.assertEqual(
+            set(schema["required"]),
+            {"status", "summary", "result", "questions", "state_file", "concerns"},
+        )
+        self.assertFalse(schema["additionalProperties"])
+
     def test_protocol_context_states_concern_exclusivity(self) -> None:
         context = build_dialogue_context("Writer rules", "/tmp", [])
 
@@ -269,10 +348,17 @@ Bounded writer.
                 "--parent-answer-file",
                 "answer.md",
             ]
-            terminal = _transport_result(
-                '<subagent_result>{"status":"DONE","summary":"Finished",'
-                '"questions":[],"state_file":null,"concerns":[]}</subagent_result>'
-            )
+            terminal = {
+                **_transport_result(""),
+                "structured_output": {
+                    "status": "DONE",
+                    "summary": "Finished",
+                    "result": "Implemented and verified.",
+                    "questions": [],
+                    "state_file": None,
+                    "concerns": [],
+                },
+            }
             stdout = StringIO()
 
             with (
@@ -287,9 +373,13 @@ Bounded writer.
         self.assertEqual(exited.exception.code, 0)
         invocation = execute.call_args.args[0]
         self.assertIn("Choose JSON.", invocation.system_context)
+        self.assertEqual(invocation.structured_output_schema, dialogue_json_schema())
         self.assertTrue(execute.call_args.kwargs["allow_dialogue_fallback"])
         payload = __import__("json").loads(stdout.getvalue())
         self.assertEqual(payload["agent_status"], "DONE")
+        self.assertEqual(payload["result"], "Implemented and verified.")
+        self.assertEqual(payload["terminal_protocol"], "structured_output")
+        self.assertNotIn("structured_output", payload)
 
     def test_parent_answer_file_requires_dialogue_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
