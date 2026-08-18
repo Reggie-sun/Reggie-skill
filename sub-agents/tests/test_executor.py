@@ -70,6 +70,46 @@ def _drive_test_process(
             process.wait()
 
 
+def _event_source(events: list[dict], exit_code: int = 0) -> str:
+    return (
+        "import json\n"
+        f"events = {events!r}\n"
+        "for event in events:\n"
+        "    print(json.dumps(event), flush=True)\n"
+        f"raise SystemExit({exit_code})\n"
+    )
+
+
+def _structured_tool_use(tool_id: str, payload: dict) -> dict:
+    return {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": "StructuredOutput",
+                    "input": payload,
+                }
+            ]
+        },
+    }
+
+
+def _tool_result(tool_id: str, *, is_error: bool = False) -> dict:
+    item = {
+        "type": "tool_result",
+        "tool_use_id": tool_id,
+        "content": "failed" if is_error else "success",
+    }
+    if is_error:
+        item["is_error"] = True
+    return {
+        "type": "user",
+        "message": {"content": [item]},
+    }
+
+
 class ExecutorLivenessTests(unittest.TestCase):
     def test_safe_edit_uses_configured_timeout_as_semantic_cap(self) -> None:
         invocation = AgentInvocation(
@@ -625,6 +665,131 @@ print(json.dumps({{
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["termination_reason"], "cli_exit")
         self.assertEqual(result["structured_output"], structured_output)
+
+    def test_clean_schema_exit_recovers_confirmed_structured_tool_result(self) -> None:
+        structured_output = {
+            "status": "DONE",
+            "summary": "Mapped the lifecycle",
+            "result": "Detailed findings.",
+            "questions": [],
+            "state_file": None,
+            "concerns": [],
+        }
+        result = _drive_test_process(
+            _event_source(
+                [
+                    _structured_tool_use("structured-1", structured_output),
+                    _tool_result("structured-1"),
+                ]
+            ),
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_structured_output=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["termination_reason"], "structured_tool_result")
+        self.assertEqual(result["structured_output"], structured_output)
+
+    def test_structured_tool_recovery_requires_schema_and_successful_tool_result(
+        self,
+    ) -> None:
+        tool_use = _structured_tool_use("structured-1", {"result": "Findings."})
+        cases = (
+            (False, [tool_use, _tool_result("structured-1")]),
+            (True, [tool_use]),
+            (True, [tool_use, _tool_result("structured-1", is_error=True)]),
+        )
+
+        for allow_structured_output, events in cases:
+            with self.subTest(
+                allow_structured_output=allow_structured_output,
+                events=events,
+            ):
+                result = _drive_test_process(
+                    _event_source(events),
+                    io.StringIO(),
+                    timeout_ms=1_000,
+                    allow_structured_output=allow_structured_output,
+                )
+
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(
+                    result["termination_reason"],
+                    "missing_terminal_result",
+                )
+
+    def test_structured_tool_recovery_uses_only_latest_confirmed_call(self) -> None:
+        first = _structured_tool_use("first", {"result": "first"})
+        latest = _structured_tool_use("latest", {"result": "latest"})
+        first_success = [first, _tool_result("first")]
+        cases = (
+            [*first_success, latest],
+            [
+                *first_success,
+                latest,
+                _tool_result("latest", is_error=True),
+            ],
+            [first, latest, _tool_result("first")],
+            [
+                *first_success,
+                latest,
+                _tool_result("mismatched"),
+            ],
+        )
+
+        for events in cases:
+            with self.subTest(events=events):
+                result = _drive_test_process(
+                    _event_source(events),
+                    io.StringIO(),
+                    timeout_ms=1_000,
+                    allow_structured_output=True,
+                )
+
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(
+                    result["termination_reason"],
+                    "missing_terminal_result",
+                )
+
+    def test_structured_tool_recovery_requires_clean_child_exit(self) -> None:
+        events = [
+            _structured_tool_use("structured-1", {"result": "confirmed"}),
+            _tool_result("structured-1"),
+        ]
+
+        result = _drive_test_process(
+            _event_source(events, exit_code=2),
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_structured_output=True,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["cli_exit_code"], 2)
+        self.assertEqual(result["termination_reason"], "cli_error")
+        self.assertNotIn("structured_output", result)
+
+    def test_latest_structured_call_can_confirm_after_prior_error(self) -> None:
+        latest_payload = {"result": "latest"}
+        events = [
+            _structured_tool_use("first", {"result": "first"}),
+            _tool_result("first", is_error=True),
+            _structured_tool_use("latest", latest_payload),
+            _tool_result("latest"),
+        ]
+
+        result = _drive_test_process(
+            _event_source(events),
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_structured_output=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["termination_reason"], "structured_tool_result")
+        self.assertEqual(result["structured_output"], latest_payload)
 
     def test_non_schema_invocations_reject_structured_only_terminal_events(self) -> None:
         source = """

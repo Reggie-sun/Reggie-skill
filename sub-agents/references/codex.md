@@ -74,6 +74,10 @@ commit so a denied commit grant cannot waste an otherwise completed change.
   `structured_output` from the terminal result. If the model cannot satisfy the
   schema after the CLI's bounded retries, the CLI reports an explicit
   `error_max_structured_output_retries` result instead of ambiguous success.
+- A clean schema-enabled exit may recover a `StructuredOutput` tool payload only
+  after the stream observes its matching successful `tool_result`; this is
+  reported as `termination_reason=structured_tool_result`. Missing, mismatched,
+  or error tool results remain `missing_terminal_result`.
 - The legacy envelope fallback remains bounded: a clean child exit whose last
   complete assistant message ends with `<subagent_result>` may recover through
   `termination_reason=assistant_envelope`; strict semantic normalization still

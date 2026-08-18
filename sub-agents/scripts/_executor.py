@@ -89,6 +89,8 @@ def build_final_response(
 
     if terminated_by_us:
         termination_reason = "terminal_event"
+    elif result and result.get("terminal_source") == "structured_tool_result":
+        termination_reason = "structured_tool_result"
     elif result and result.get("terminal_source") == "assistant_envelope":
         termination_reason = "assistant_envelope"
     elif not result and cli_exit_code == 0:
@@ -451,6 +453,9 @@ def _drive_process(
         result = processor.get_result()
         if result is None:
             processor.process_complete_output("".join(stdout_lines))
+            result = processor.get_result()
+        if result is None and process.returncode == 0 and allow_structured_output:
+            processor.promote_clean_exit_structured_result()
             result = processor.get_result()
         if result is None and process.returncode == 0 and allow_dialogue_fallback:
             processor.promote_clean_exit_dialogue_result()
