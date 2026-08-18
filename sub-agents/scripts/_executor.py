@@ -118,6 +118,8 @@ def build_final_response(
         "cli": cli,
         "termination_reason": termination_reason,
     }
+    if result and isinstance(result.get("structured_output"), dict):
+        response["structured_output"] = result["structured_output"]
     if status == "error":
         result_error = result.get("error") if result else None
         result_subtype = result.get("subtype") if result else None
@@ -324,6 +326,7 @@ def _drive_process(
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = False,
     allow_dialogue_fallback: bool = False,
+    allow_structured_output: bool = False,
 ) -> dict:
     if progress_stream is None:
         progress_stream = sys.stderr
@@ -342,6 +345,7 @@ def _drive_process(
         cli,
         allowed_commands=allowed_commands,
         count_tool_requests_as_progress=not fail_fast_tool_errors,
+        allow_structured_output=allow_structured_output,
     )
     stdout_lines: list = []
     accumulated_chars = 0
@@ -500,6 +504,7 @@ def _spawn_and_drive(
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = False,
     allow_dialogue_fallback: bool = False,
+    allow_structured_output: bool = False,
 ) -> dict:
     try:
         # Prevent CLIs from waiting for interactive input.
@@ -538,6 +543,7 @@ def _spawn_and_drive(
         allowed_commands=allowed_commands,
         fail_fast_tool_errors=fail_fast_tool_errors,
         allow_dialogue_fallback=allow_dialogue_fallback,
+        allow_structured_output=allow_structured_output,
     )
 
 
@@ -595,4 +601,5 @@ def execute_agent(
         allowed_commands=inv.allowed_commands,
         fail_fast_tool_errors=inv.permission == "safe-edit",
         allow_dialogue_fallback=allow_dialogue_fallback,
+        allow_structured_output=inv.structured_output_schema is not None,
     )

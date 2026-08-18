@@ -168,10 +168,13 @@ Subagent (general-purpose):
     - Your concerns, if any
     - The report file path
 
-    When the runner supplies a `Bounded Dialogue Protocol`, the final content
-    MUST be its single `<subagent_result>` JSON envelope. Use its `status`,
-    `summary`, `questions`, `state_file`, and `concerns` schema exactly; do not
-    emit the old Markdown `**Status:**` line as a substitute.
+    When the runner supplies a `Bounded Dialogue Protocol`, follow its terminal
+    contract exactly. If the transport supplies structured output, put the full
+    concise report in `result` and populate `status`, `summary`, `questions`,
+    `state_file`, and `concerns` through that schema. Use a
+    `<subagent_result>` envelope only when the runner explicitly requests the
+    legacy envelope protocol. Do not emit the old Markdown `**Status:**` line
+    as a substitute.
 
     If BLOCKED or NEEDS_CONTEXT, put the specifics in the final message
     itself — the controller acts on it directly.

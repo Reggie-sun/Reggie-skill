@@ -169,12 +169,16 @@ result can combine transport success with a nonzero raw `cli_exit_code`. If the
 child exits 0 without a usable terminal result, the runner returns
 `status=error`, `exit_code=1`, `cli_exit_code=0`, and
 `termination_reason=missing_terminal_result`; it does not misreport the child
-as having exited 1. One bounded exception applies to `--dialogue`: if the child
+as having exited 1. Claude-family `--dialogue` invocations use the CLI's
+`--json-schema` transport contract and normalize the terminal
+`structured_output`; invalid model output is retried by the CLI and ends as an
+explicit structured-output error if it cannot converge. The legacy envelope
+path remains available for non-Claude backends and compatibility: if the child
 exits 0 and its last complete assistant message ends with a
-`<subagent_result>` envelope, the runner recovers that message and reports
-`termination_reason=assistant_envelope`; the existing strict dialogue validator
-still decides whether the envelope is valid. Plain text, non-dialogue runs, and
-nonzero child exits remain errors.
+`<subagent_result>` envelope, the runner recovers it through
+`termination_reason=assistant_envelope` and applies the same strict semantic
+validation. Plain text, non-dialogue runs, and nonzero child exits remain
+errors.
 
 **By status:**
 
@@ -266,12 +270,14 @@ How results should be structured.
 
 For Claude-based transports (`claude`, `glm`, `kimi`, and `minimax`),
 `read-only` uses `dontAsk`, disables settings inheritance and session
-persistence, and exposes only `Read`, `Glob`, and `Grep`. It does not expose
+persistence, and exposes only `Read`, `Glob`, and `Grep`, plus the internal
+`StructuredOutput` finalizer when `--dialogue` supplies a schema. It does not expose
 shell, write, plan-transition, task, network, or MCP tools; an empty strict MCP
 configuration prevents inherited MCP servers from reopening that surface.
 `safe-edit` uses `dontAsk` and likewise disables inherited settings, sessions,
 nested-agent, network, plan-transition, and MCP tools. It exposes `Read`,
-`Glob`, `Grep`, `Write`, and `Edit`, but only repeated `--allow-path` rules
+`Glob`, `Grep`, `Write`, and `Edit` (plus the internal `StructuredOutput`
+finalizer for schema-backed dialogue), but only repeated `--allow-path` rules
 approve edits; Bash appears only when at least one exact `--allow-command` is
 supplied. The runner also injects the resolved path and command grants into the
 agent's system context, including diagnostic argv, so a quoting mismatch is

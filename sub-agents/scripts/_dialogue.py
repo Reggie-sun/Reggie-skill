@@ -14,6 +14,34 @@ _ENVELOPE_PATTERN = re.compile(
     r"<subagent_result>\s*(.*?)\s*</subagent_result>",
     re.DOTALL,
 )
+_DIALOGUE_FIELDS = frozenset(
+    {"status", "summary", "result", "questions", "state_file", "concerns"}
+)
+_DIALOGUE_OUTPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "status": {"type": "string", "enum": sorted(_VALID_AGENT_STATUSES)},
+        "summary": {"type": "string", "minLength": 1},
+        "result": {"type": "string", "minLength": 1},
+        "questions": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "maxItems": 3,
+        },
+        "state_file": {
+            "anyOf": [
+                {"type": "string", "minLength": 1},
+                {"type": "null"},
+            ]
+        },
+        "concerns": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+        },
+    },
+    "required": sorted(_DIALOGUE_FIELDS),
+}
 
 _PROTOCOL_CONTEXT = """## Bounded Dialogue Protocol
 
@@ -33,10 +61,38 @@ Rules:
 - `DONE_WITH_CONCERNS` requires at least one concern.
 - `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
 - `questions` must be empty unless status is `NEEDS_CONTEXT`.
-- `state_file` is optional; when present it must name an existing regular file
-  inside the working directory that preserves useful state for the next turn.
+- `state_file` must be `null` unless useful state was written; a non-null value
+  must name an existing regular file inside the working directory.
 - Do not include a second envelope or any content after the closing tag.
 """
+
+_STRUCTURED_PROTOCOL_CONTEXT = """## Bounded Dialogue Protocol
+
+This is a fresh, non-interactive invocation. Do not wait for live input and do
+not use session persistence. The transport requires structured output. Put the
+complete human-readable findings or implementation report in `result`, then
+provide `status`, `summary`, `questions`, `state_file`, and `concerns` exactly
+as required by the supplied JSON schema. Do not print an XML envelope or place
+any report outside the structured output.
+
+Rules:
+- `NEEDS_CONTEXT` requires one to three non-empty questions.
+- `DONE_WITH_CONCERNS` requires at least one concern.
+- `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
+- `questions` must be empty unless status is `NEEDS_CONTEXT`.
+- `state_file` must be `null` unless useful state was written; a non-null value
+  must name an existing regular file inside the working directory.
+"""
+
+
+def dialogue_json_schema() -> str:
+    """Return the stable Claude CLI schema for bounded dialogue results."""
+    return json.dumps(
+        _DIALOGUE_OUTPUT_SCHEMA,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
 def _protocol_error(result: dict, message: str) -> dict:
@@ -75,9 +131,12 @@ def build_dialogue_context(
     base_context: str,
     cwd: str,
     parent_answer_files: list[str] | tuple[str, ...],
+    *,
+    structured_output: bool = False,
 ) -> str:
     """Add the bounded dialogue contract and validated parent answer artifacts."""
-    sections = [base_context.strip(), _PROTOCOL_CONTEXT.strip()]
+    protocol = _STRUCTURED_PROTOCOL_CONTEXT if structured_output else _PROTOCOL_CONTEXT
+    sections = [base_context.strip(), protocol.strip()]
     answers = []
 
     for answer_path in parent_answer_files:
@@ -121,6 +180,38 @@ def normalize_dialogue_result(result: dict, cwd: str) -> dict:
     if result.get("status") != "success":
         return result
 
+    structured_output = result.get("structured_output")
+    if structured_output is not None:
+        if not isinstance(structured_output, dict):
+            return _protocol_error(result, "structured output must be a JSON object.")
+        fields = set(structured_output)
+        missing = _DIALOGUE_FIELDS - fields
+        unexpected = fields - _DIALOGUE_FIELDS
+        if missing:
+            return _protocol_error(
+                result,
+                "structured output is missing required fields: "
+                + ", ".join(sorted(missing))
+                + ".",
+            )
+        if unexpected:
+            return _protocol_error(
+                result,
+                "structured output has unexpected fields: "
+                + ", ".join(sorted(unexpected))
+                + ".",
+            )
+        human_report = structured_output.get("result")
+        if not isinstance(human_report, str) or not human_report.strip():
+            return _protocol_error(result, "result must be a non-empty string.")
+        return _normalize_dialogue_payload(
+            result,
+            cwd,
+            structured_output,
+            human_report.strip(),
+            terminal_protocol="structured_output",
+        )
+
     text = result.get("result")
     if not isinstance(text, str):
         return _protocol_error(result, "result is not text.")
@@ -141,6 +232,26 @@ def normalize_dialogue_result(result: dict, cwd: str) -> dict:
         return _protocol_error(result, f"envelope contains invalid JSON: {exc.msg}.")
     if not isinstance(envelope, dict):
         return _protocol_error(result, "envelope must be a JSON object.")
+
+    human_report = text[: match.start()].rstrip()
+    return _normalize_dialogue_payload(
+        result,
+        cwd,
+        envelope,
+        human_report,
+        terminal_protocol="assistant_envelope",
+    )
+
+
+def _normalize_dialogue_payload(
+    result: dict,
+    cwd: str,
+    envelope: dict,
+    human_report: str,
+    *,
+    terminal_protocol: str,
+) -> dict:
+    """Apply semantic dialogue rules after transport-level decoding."""
 
     try:
         agent_status = envelope.get("status")
@@ -178,8 +289,7 @@ def normalize_dialogue_result(result: dict, cwd: str) -> dict:
     except ValueError as exc:
         return _protocol_error(result, str(exc))
 
-    human_report = text[: match.start()].rstrip()
-    return {
+    normalized = {
         **result,
         "result": human_report or summary,
         "agent_status": agent_status,
@@ -188,4 +298,7 @@ def normalize_dialogue_result(result: dict, cwd: str) -> dict:
         "concerns": concerns,
         "state_file": state_file,
         "protocol_version": 1,
+        "terminal_protocol": terminal_protocol,
     }
+    normalized.pop("structured_output", None)
+    return normalized
