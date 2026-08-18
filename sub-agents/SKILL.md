@@ -44,6 +44,13 @@ context or when reloading that context costs more than the edit. Prefer an
 external writer for a bounded implementation unit with clear file ownership
 and enough independent work to justify a fresh context.
 
+This skill implements external delegation; it does not decide whether a task
+must be delegated. When a higher-priority rule routes a bounded writer through
+this skill, use the host `writer` definition and its configured external
+backend. Do not silently replace that dispatch with a native write-capable
+agent. Returning implementation to the parent is a parent workflow decision,
+not a writer fallback inside this skill.
+
 Do not automatically bundle implementation, the full regression suite, and a
 Git commit into one external invocation. The parent should normally run final
 verification and commit already-completed work. Delegate a commit only when an
@@ -89,7 +96,30 @@ When the user leaves the agent selection open:
 | 1 | Select it |
 | 2+ | Show names and descriptions, then ask the user to select one |
 
-### Step 2: Execute Agent
+### Step 2: Check Concurrent Writer Ownership
+
+Before launching a write-capable agent, inspect every observable live native
+agent and external Codex/MiniMax `run_subagent.py` or CLI process. For each
+writer, recover its explicit ownership from status reports and repeated
+`--allow-path` grants; do not infer ownership from `git status` or `git diff`
+alone.
+
+Compare the new writer's complete target file set with those grants:
+
+- If the file sets are disjoint and are not tightly coupled, fresh-dispatch a
+  new bounded writer CLI immediately when higher-priority repository rules
+  allow same-working-tree concurrency. Do not wait merely because another
+  writer or CLI is running.
+- If a path overlaps, the files are tightly coupled, or an active writer's
+  ownership cannot be determined, coordinate or wait before dispatch.
+- Give every concurrent writer mutually exclusive repeated `--allow-path`
+  grants. Keep verification and Git command grants task-scoped, and re-check
+  ownership before staging or committing.
+
+An existing CLI process is evidence of activity, not a reusable dialogue
+session. Every independent writer task still uses a fresh invocation.
+
+### Step 3: Execute Agent
 
 ```bash
 python3 {SKILL_DIR}/scripts/run_subagent.py \
@@ -115,7 +145,7 @@ agent returns `NEEDS_CONTEXT`, write the answer to a UTF-8 artifact inside
 `--dialogue --parent-answer-file <relative path>`. The answer artifact is
 context only: never add it to `--allow-path`, and never place credentials in it.
 
-### Step 3: Handle Response
+### Step 4: Handle Response
 
 Parse JSON output and check the transport `status` field:
 
