@@ -126,6 +126,14 @@ class DialogueResultTests(unittest.TestCase):
 
 
 class DialogueContextTests(unittest.TestCase):
+    def test_protocol_context_states_concern_exclusivity(self) -> None:
+        context = build_dialogue_context("Writer rules", "/tmp", [])
+
+        self.assertIn(
+            "`concerns` must be empty unless status is `DONE_WITH_CONCERNS`.",
+            context,
+        )
+
     def test_parent_answer_file_is_injected_with_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             answer = Path(temp_dir) / "dialogue" / "round-1-answer.md"

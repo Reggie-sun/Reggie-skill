@@ -195,8 +195,10 @@ configuration prevents inherited MCP servers from reopening that surface.
 nested-agent, network, plan-transition, and MCP tools. It exposes `Read`,
 `Glob`, `Grep`, `Write`, and `Edit`, but only repeated `--allow-path` rules
 approve edits; Bash appears only when at least one exact `--allow-command` is
-supplied. Use repeated flags for explicit ownership, focused tests, and
-task-only Git commands the parent has authorized. Do not use `yolo` as a
+supplied. The runner also injects the resolved path and command grants into the
+agent's system context so a denied unlisted command is not mistaken for Bash
+being unavailable. Use repeated flags for explicit ownership, focused tests,
+and task-only Git commands the parent has authorized. Do not use `yolo` as a
 workaround for a missing path or command grant.
 
 ## MiniMax Configuration

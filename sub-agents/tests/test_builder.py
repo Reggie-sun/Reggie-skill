@@ -147,6 +147,28 @@ class ClaudeFamilyReadOnlyTests(unittest.TestCase):
         self.assertNotIn("Task", args[args.index("--tools") + 1].split(","))
         self.assertIn("Task", args[args.index("--disallowedTools") + 1].split(","))
 
+    def test_minimax_writer_receives_explicit_grant_context(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="implement and verify",
+            cwd="/tmp/project",
+            permission="safe-edit",
+            allowed_commands=("git status --short",),
+            allowed_paths=("src/widget.py",),
+        )
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}):
+            _, args, _ = build_invocation_args(invocation)
+
+        system_prompt = args[args.index("--system-prompt") + 1]
+        self.assertIn("Runner-enforced safe-edit grants", system_prompt)
+        self.assertIn("Writable paths:\n- src/widget.py", system_prompt)
+        self.assertIn("Exact Bash commands:\n- git status --short", system_prompt)
+        self.assertIn(
+            "A denial for any other command does not mean Bash is unavailable.",
+            system_prompt,
+        )
+
     def test_rejects_unsafe_allowed_command_syntax(self) -> None:
         invocation = AgentInvocation(
             cli="minimax",

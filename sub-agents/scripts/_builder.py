@@ -218,9 +218,31 @@ def _concatenated_args(
     return command, perm_flags + base_args, env
 
 
+def _claude_system_prompt(inv: AgentInvocation) -> str:
+    sections = [f"cwd: {inv.cwd}", inv.system_context]
+    if inv.permission == "safe-edit":
+        writable_paths = "\n".join(f"- {path}" for path in inv.allowed_paths)
+        if inv.allowed_commands:
+            bash_commands = "\n".join(f"- {command}" for command in inv.allowed_commands)
+            bash_grants = (
+                f"Exact Bash commands:\n{bash_commands}\n"
+                "Only these exact Bash commands are authorized; do not alter, wrap, or "
+                "combine them. A denial for any other command does not mean Bash is "
+                "unavailable."
+            )
+        else:
+            bash_grants = "Exact Bash commands:\n- None. Bash is not exposed."
+        sections.append(
+            "Runner-enforced safe-edit grants (authoritative):\n"
+            f"Writable paths:\n{writable_paths}\n"
+            f"{bash_grants}"
+        )
+    return "\n\n".join(section for section in sections if section)
+
+
 def _build_claude_args(inv: AgentInvocation) -> tuple[str, list, dict | None]:
     perm = _invocation_flags(inv)
-    system_prompt = f"cwd: {inv.cwd}\n\n{inv.system_context}"
+    system_prompt = _claude_system_prompt(inv)
     command, base_args = build_command(inv.cli, inv.prompt)
     return command, perm + ["--append-system-prompt", system_prompt] + base_args, None
 
@@ -343,7 +365,7 @@ def _build_redirected_claude_args(
     credential_env: str,
 ) -> tuple[str, list, dict | None]:
     perm = _invocation_flags(inv)
-    system_prompt = f"cwd: {inv.cwd}\n\n{inv.system_context}"
+    system_prompt = _claude_system_prompt(inv)
     command, base_args = build_command(inv.cli, inv.prompt)
     env_override = {
         "ANTHROPIC_BASE_URL": base_url,
