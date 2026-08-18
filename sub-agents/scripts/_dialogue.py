@@ -31,6 +31,8 @@ human-readable report:
 Rules:
 - `NEEDS_CONTEXT` requires one to three non-empty questions.
 - `DONE_WITH_CONCERNS` requires at least one concern.
+- `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
+- `questions` must be empty unless status is `NEEDS_CONTEXT`.
 - `state_file` is optional; when present it must name an existing regular file
   inside the working directory that preserves useful state for the next turn.
 - Do not include a second envelope or any content after the closing tag.
@@ -42,7 +44,9 @@ def _protocol_error(result: dict, message: str) -> dict:
         **result,
         "status": "error",
         "exit_code": 2,
+        "transport_exit_code": 1,
         "agent_status": "PROTOCOL_ERROR",
+        "termination_reason": "dialogue_protocol_error",
         "error": f"Bounded dialogue protocol error: {message}",
     }
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,6 +22,19 @@ class AgentInvocation:
     effort: str | None = None
     allowed_commands: tuple[str, ...] = ()
     allowed_paths: tuple[str, ...] = ()
+
+
+def parse_command_argv(command: str) -> tuple[str, ...]:
+    """Parse a command grant for diagnostics without changing its exact spelling."""
+    try:
+        argv = tuple(shlex.split(command, posix=True))
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid allowed command {command!r}: invalid shell quoting ({exc})."
+        ) from exc
+    if not argv:
+        raise ValueError(f"Invalid allowed command {command!r}: command is empty.")
+    return argv
 
 
 def build_command(cli: str, prompt: str) -> tuple[str, list]:
@@ -200,6 +214,7 @@ def _invocation_flags(inv: AgentInvocation) -> list:
                     f"Invalid allowed command {command!r}: commands must be non-empty single lines "
                     "without ')'."
                 )
+            parse_command_argv(command)
             allowed_rules.append(f"Bash({command})")
         if inv.allowed_commands:
             flags[flags.index("--tools") + 1] += ",Bash"
@@ -218,9 +233,38 @@ def _concatenated_args(
     return command, perm_flags + base_args, env
 
 
+def _claude_system_prompt(inv: AgentInvocation) -> str:
+    sections = [f"cwd: {inv.cwd}", inv.system_context]
+    if inv.permission == "safe-edit":
+        writable_paths = "\n".join(f"- {path}" for path in inv.allowed_paths)
+        if inv.allowed_commands:
+            bash_commands = "\n".join(
+                f"- {command}\n"
+                f"  argv={json.dumps(list(parse_command_argv(command)), ensure_ascii=False)}"
+                for command in inv.allowed_commands
+            )
+            bash_grants = (
+                f"Exact Bash commands:\n{bash_commands}\n"
+                "The argv form is diagnostic only; enforcement still uses the exact shell "
+                "string shown above. Only these exact Bash commands are authorized; do not "
+                "alter quoting, wrap, or combine them. A denial for any other command does "
+                "not mean Bash is unavailable. After a denial, do not guess another spelling "
+                "or retry the command; report BLOCKED with the attempted command and the exact "
+                "grant mismatch."
+            )
+        else:
+            bash_grants = "Exact Bash commands:\n- None. Bash is not exposed."
+        sections.append(
+            "Runner-enforced safe-edit grants (authoritative):\n"
+            f"Writable paths:\n{writable_paths}\n"
+            f"{bash_grants}"
+        )
+    return "\n\n".join(section for section in sections if section)
+
+
 def _build_claude_args(inv: AgentInvocation) -> tuple[str, list, dict | None]:
     perm = _invocation_flags(inv)
-    system_prompt = f"cwd: {inv.cwd}\n\n{inv.system_context}"
+    system_prompt = _claude_system_prompt(inv)
     command, base_args = build_command(inv.cli, inv.prompt)
     return command, perm + ["--append-system-prompt", system_prompt] + base_args, None
 
@@ -343,7 +387,7 @@ def _build_redirected_claude_args(
     credential_env: str,
 ) -> tuple[str, list, dict | None]:
     perm = _invocation_flags(inv)
-    system_prompt = f"cwd: {inv.cwd}\n\n{inv.system_context}"
+    system_prompt = _claude_system_prompt(inv)
     command, base_args = build_command(inv.cli, inv.prompt)
     env_override = {
         "ANTHROPIC_BASE_URL": base_url,

@@ -229,14 +229,13 @@ read-only.
 External invocations are fresh and stateless. Every fix dispatch therefore
 includes the task brief path, report path, current state, and exact open
 findings; use the report as persistent memory rather than assuming session
-resume. Keep `run_subagent.py` attached until it returns terminal JSON. Its
-transport idle timeout is distinct from the read-only Claude-family
-120-second semantic-stagnation limit: repeated identical heartbeats or
-semantically identical `tool_result` events show liveness but do not count as
-progress. Safe-edit writers use their transport idle timeout so a legitimate
-long-running test is not killed at 120 seconds; the same configured timeout
-also caps semantically stagnant retries, so repeated denials cannot run
-forever by emitting heartbeats.
+resume. Keep `run_subagent.py` attached until it returns terminal JSON. Treat
+the installed `sub-agents` skill as the source of truth for liveness
+semantics. Claude-family explorers and writers use their resolved agent/CLI
+timeout as the semantic-stagnation cap; distinct read-only tool requests count
+as progress, while repeated identical heartbeats, requests, or tool results do
+not. Safe-edit denial/error loops still use the runner's structured fail-fast
+guard instead of waiting for that cap.
 
 Treat transport `status` and task `agent_status` as separate gates. A transport
 `success` is not completion unless `agent_status` is `DONE` or

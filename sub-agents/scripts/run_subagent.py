@@ -19,7 +19,15 @@ from _resolver import resolve_cli  # noqa: E402
 
 
 def _print_error(error: str, exit_code: int = 1, cli: str | None = None) -> None:
-    payload = {"result": "", "exit_code": exit_code, "status": "error", "error": error}
+    payload = {
+        "result": "",
+        "exit_code": exit_code,
+        "transport_exit_code": 1,
+        "cli_exit_code": None,
+        "status": "error",
+        "termination_reason": "runner_validation",
+        "error": error,
+    }
     if cli is not None:
         payload["cli"] = cli
     print(json.dumps(payload))
@@ -55,8 +63,8 @@ def main() -> None:
         action="append",
         default=[],
         help=(
-            "Exact Bash command to authorize for a Claude-family safe-edit agent; "
-            "repeat for multiple commands"
+            "Exact Bash shell string to authorize for a Claude-family safe-edit agent; "
+            "preserve quoting and repeat for multiple commands"
         ),
     )
     parser.add_argument(
@@ -157,6 +165,7 @@ def main() -> None:
         result = execute_agent(
             invocation,
             timeout_ms=_resolve_timeout(args.timeout, agent_timeout_ms),
+            allow_dialogue_fallback=args.dialogue,
         )
     except ValueError as e:
         _print_error(str(e), cli=cli)
@@ -166,7 +175,7 @@ def main() -> None:
         result = normalize_dialogue_result(result, args.cwd)
 
     print(json.dumps(result, ensure_ascii=False))
-    sys.exit(0 if result["status"] == "success" else 1)
+    sys.exit(result.get("transport_exit_code", 0 if result["status"] == "success" else 1))
 
 
 if __name__ == "__main__":

@@ -111,6 +111,21 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["status"], "error")
         self.assertIn("concerns", normalized["error"].lower())
 
+    def test_done_with_concerns_preserves_successful_transport(self) -> None:
+        result = _transport_result(
+            "Read-only findings.\n"
+            '<subagent_result>{"status":"DONE_WITH_CONCERNS",'
+            '"summary":"Mapped the lifecycle","questions":[],"state_file":null,'
+            '"concerns":["Parent verification required"]}</subagent_result>'
+        )
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "DONE_WITH_CONCERNS")
+        self.assertEqual(normalized["result"], "Read-only findings.")
+        self.assertEqual(normalized["concerns"], ["Parent verification required"])
+
     def test_done_cannot_hide_concerns(self) -> None:
         result = _transport_result(
             '<subagent_result>{"status":"DONE","summary":"Implemented",'
@@ -124,8 +139,28 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["agent_status"], "PROTOCOL_ERROR")
         self.assertIn("DONE_WITH_CONCERNS", normalized["error"])
 
+    def test_blocked_status_remains_compatible(self) -> None:
+        result = _transport_result(
+            '<subagent_result>{"status":"BLOCKED","summary":"Command grant mismatch",'
+            '"questions":[],"state_file":null,"concerns":[]}</subagent_result>'
+        )
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "BLOCKED")
+        self.assertEqual(normalized["summary"], "Command grant mismatch")
+
 
 class DialogueContextTests(unittest.TestCase):
+    def test_protocol_context_states_concern_exclusivity(self) -> None:
+        context = build_dialogue_context("Writer rules", "/tmp", [])
+
+        self.assertIn(
+            "`concerns` must be empty unless status is `DONE_WITH_CONCERNS`.",
+            context,
+        )
+
     def test_parent_answer_file_is_injected_with_protocol(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             answer = Path(temp_dir) / "dialogue" / "round-1-answer.md"
@@ -252,6 +287,7 @@ Bounded writer.
         self.assertEqual(exited.exception.code, 0)
         invocation = execute.call_args.args[0]
         self.assertIn("Choose JSON.", invocation.system_context)
+        self.assertTrue(execute.call_args.kwargs["allow_dialogue_fallback"])
         payload = __import__("json").loads(stdout.getvalue())
         self.assertEqual(payload["agent_status"], "DONE")
 

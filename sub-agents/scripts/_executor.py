@@ -14,18 +14,27 @@ from _builder import AgentInvocation, build_invocation_args
 from _constants import DEFAULT_TIMEOUT_MS
 from _stream import StreamProcessor
 
-# SIGTERM may be reported as 143 or -15.
-_SUCCESS_EXIT_CODES = (0, 143, -15)
 _SEMANTIC_PROGRESS_CLIS = frozenset({"claude", "glm", "kimi", "minimax"})
 _MAX_STAGNATION_MS = 120_000
 
 
-def _partial_response(cli: str, result: dict | None, exit_code: int, error: str) -> dict:
+def _partial_response(
+    cli: str,
+    result: dict | None,
+    exit_code: int,
+    error: str,
+    *,
+    cli_exit_code: int | None = None,
+    termination_reason: str,
+) -> dict:
     response = {
         "result": result.get("result", "") if result else "",
         "exit_code": exit_code,
+        "transport_exit_code": 1,
+        "cli_exit_code": cli_exit_code,
         "status": "partial" if result else "error",
         "cli": cli,
+        "termination_reason": termination_reason,
         "error": error,
     }
     if result:
@@ -36,13 +45,22 @@ def _partial_response(cli: str, result: dict | None, exit_code: int, error: str)
 
 
 def _error_response(
-    cli: str, exit_code: int, error: str, partial_result: dict | None = None
+    cli: str,
+    exit_code: int,
+    error: str,
+    partial_result: dict | None = None,
+    *,
+    cli_exit_code: int | None = None,
+    termination_reason: str = "runner_error",
 ) -> dict:
     return {
         "result": partial_result.get("result", "") if partial_result else "",
         "exit_code": exit_code,
+        "transport_exit_code": 1,
+        "cli_exit_code": cli_exit_code,
         "status": "error",
         "cli": cli,
+        "termination_reason": termination_reason,
         "error": error,
     }
 
@@ -55,31 +73,60 @@ def build_final_response(
     stderr: str,
     terminated_by_us: bool = False,
 ) -> dict:
-    """Build a response, treating intentional termination as success."""
-    exit_code = returncode if returncode is not None else 1
+    """Build transport truth separately from the raw child CLI exit."""
+    cli_exit_code = returncode if returncode is not None else 1
 
     if result and (result.get("status") == "error" or result.get("is_error") is True):
         status = "error"
     elif result and result.get("status") == "partial":
         status = "partial"
-    elif result and (terminated_by_us or exit_code in _SUCCESS_EXIT_CODES):
+    elif result and terminated_by_us:
         status = "success"
-    elif result:
-        status = "partial"
+    elif result and cli_exit_code == 0:
+        status = "success"
     else:
         status = "error"
+
+    if terminated_by_us:
+        termination_reason = "terminal_event"
+    elif result and result.get("terminal_source") == "assistant_envelope":
+        termination_reason = "assistant_envelope"
+    elif not result and cli_exit_code == 0:
+        termination_reason = "missing_terminal_result"
+    elif cli_exit_code == 0:
+        termination_reason = "cli_exit"
+    elif cli_exit_code < 0 or cli_exit_code >= 128:
+        termination_reason = "cli_signal"
+    else:
+        termination_reason = "cli_error"
+
+    if status == "success":
+        exit_code = 0
+        transport_exit_code = 0
+    else:
+        exit_code = cli_exit_code if cli_exit_code != 0 else 1
+        if terminated_by_us:
+            exit_code = 1
+        transport_exit_code = 1
 
     response = {
         "result": result.get("result", "") if result else "".join(stdout_lines),
         "exit_code": exit_code,
+        "transport_exit_code": transport_exit_code,
+        "cli_exit_code": cli_exit_code,
         "status": status,
         "cli": cli,
+        "termination_reason": termination_reason,
     }
     if status == "error":
         result_error = result.get("error") if result else None
         result_subtype = result.get("subtype") if result else None
         result_text = result.get("result") if result else None
-        if isinstance(result_error, str) and result_error.strip():
+        if not terminated_by_us and cli_exit_code != 0 and result and not (
+            result.get("status") == "error" or result.get("is_error") is True
+        ):
+            msg = f"CLI exited abnormally with code {cli_exit_code} after emitting a result"
+        elif isinstance(result_error, str) and result_error.strip():
             msg = result_error.strip()
         elif isinstance(result_subtype, str) and result_subtype.startswith("error_"):
             msg = f"CLI reported {result_subtype.strip()}"
@@ -87,6 +134,8 @@ def build_final_response(
             msg = result_text.strip()
         elif result:
             msg = "CLI reported an error"
+        elif cli_exit_code == 0:
+            msg = "CLI exited with code 0 without a usable terminal result"
         else:
             msg = f"CLI exited with code {exit_code}"
         if stderr and stderr.strip():
@@ -117,35 +166,122 @@ def _spawn_reader(process: subprocess.Popen) -> queue.Queue:
     return line_q
 
 
-def _timeout_payload(cli: str, processor: StreamProcessor, timeout_ms: int) -> dict:
+def _timeout_payload(
+    cli: str,
+    processor: StreamProcessor,
+    timeout_ms: int,
+    cli_exit_code: int | None,
+) -> dict:
     error = (
         f"Sub-agent idle timeout after {timeout_ms} ms without CLI activity. "
         "Increase --timeout, resume the reported session, or simplify the task before retrying."
     )
-    return _partial_response(cli, processor.get_partial_result(), 124, error)
+    return _partial_response(
+        cli,
+        processor.get_partial_result(),
+        124,
+        error,
+        cli_exit_code=cli_exit_code,
+        termination_reason="idle_timeout",
+    )
 
 
-def _stagnation_payload(cli: str, processor: StreamProcessor, timeout_ms: int) -> dict:
+def _stagnation_payload(
+    cli: str,
+    processor: StreamProcessor,
+    timeout_ms: int,
+    cli_exit_code: int | None,
+) -> dict:
     error = (
         f"Sub-agent stagnation timeout after {timeout_ms} ms without semantic progress. "
         "Retry with a narrower task or lower reasoning effort."
     )
-    return _partial_response(cli, processor.get_partial_result(), 124, error)
+    return _partial_response(
+        cli,
+        processor.get_partial_result(),
+        124,
+        error,
+        cli_exit_code=cli_exit_code,
+        termination_reason="semantic_stagnation",
+    )
 
 
-def _signal_process_group(process: subprocess.Popen, sig: int) -> None:
+def _tool_error_loop_payload(
+    cli: str,
+    processor: StreamProcessor,
+    blocker: dict,
+    cli_exit_code: int | None,
+) -> dict:
+    attempted = blocker.get("attempted_command") or "<unavailable>"
+    if blocker.get("kind") == "permission_denial_loop":
+        grant_match = blocker.get("grant_match")
+        if blocker.get("tool") == "Bash" and grant_match in {
+            "argv_equivalent_exact_string_mismatch",
+            "command_not_authorized",
+        }:
+            detail = (
+                f"Permission denial loop after {blocker['occurrences']} failures; "
+                f"command grant mismatch for {attempted!r} ({grant_match})."
+            )
+        elif blocker.get("tool") == "Bash" and grant_match == "exact_grant_present":
+            detail = (
+                f"Permission denial loop after {blocker['occurrences']} failures; "
+                f"the exact granted command {attempted!r} was denied by the CLI tool policy."
+            )
+        else:
+            detail = (
+                f"Permission denial loop after {blocker['occurrences']} failures "
+                f"for tool {blocker.get('tool') or '<unknown>'}."
+            )
+    else:
+        detail = (
+            f"Repeated equivalent tool error after {blocker['occurrences']} failures "
+            f"while attempting {attempted!r}."
+        )
+    response = _error_response(
+        cli,
+        1,
+        detail,
+        partial_result=processor.get_partial_result(),
+        cli_exit_code=cli_exit_code,
+        termination_reason="tool_error_loop",
+    )
+    response.update(
+        {
+            "agent_status": "BLOCKED",
+            "summary": detail,
+            "blocker": blocker,
+        }
+    )
+    return response
+
+
+def _signal_process_group(process: subprocess.Popen, sig: int) -> bool:
     try:
         os.killpg(process.pid, sig)
+        return True
     except ProcessLookupError:
-        return
+        return False
     except OSError:
         # Retain a best-effort fallback for unusual platforms/process launchers.
         if process.poll() is not None:
-            return
+            return False
         try:
             process.send_signal(sig)
+            return True
         except ProcessLookupError:
-            pass
+            return False
+
+
+def _terminate_after_terminal(process: subprocess.Popen, grace_sec: float = 0.05) -> bool:
+    """Let a CLI report its own exit before attributing a SIGTERM to the runner."""
+    try:
+        process.wait(timeout=grace_sec)
+        # The leader reported its own exit; still clean up any inherited group.
+        _signal_process_group(process, signal.SIGTERM)
+        return False
+    except subprocess.TimeoutExpired:
+        return _signal_process_group(process, signal.SIGTERM)
 
 
 def _emit_progress(
@@ -185,6 +321,9 @@ def _drive_process(
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
     semantic_timeout_ms: int | None = None,
+    allowed_commands: tuple[str, ...] = (),
+    fail_fast_tool_errors: bool = False,
+    allow_dialogue_fallback: bool = False,
 ) -> dict:
     if progress_stream is None:
         progress_stream = sys.stderr
@@ -199,11 +338,16 @@ def _drive_process(
     stagnation_deadline = started_at + stagnation_timeout_ms / 1000
     enforce_stagnation = stagnation_timeout_ms > 0
     next_heartbeat = started_at + heartbeat_sec
-    processor = StreamProcessor(cli)
+    processor = StreamProcessor(
+        cli,
+        allowed_commands=allowed_commands,
+        count_tool_requests_as_progress=not fail_fast_tool_errors,
+    )
     stdout_lines: list = []
     accumulated_chars = 0
     line_q = _spawn_reader(process)
     saw_terminal = False
+    terminated_by_us = False
     last_progress_event = None
     last_progress_revision = processor.get_progress_revision()
 
@@ -217,8 +361,10 @@ def _drive_process(
                 _drain_to_eof(line_q)
                 process.communicate()
                 if enforce_stagnation and stagnation_deadline <= idle_deadline:
-                    return _stagnation_payload(cli, processor, stagnation_timeout_ms)
-                return _timeout_payload(cli, processor, timeout_ms)
+                    return _stagnation_payload(
+                        cli, processor, stagnation_timeout_ms, process.returncode
+                    )
+                return _timeout_payload(cli, processor, timeout_ms, process.returncode)
 
             try:
                 wait_for = min(remaining, max(0.001, next_heartbeat - now))
@@ -229,12 +375,14 @@ def _drive_process(
                     _signal_process_group(process, signal.SIGKILL)
                     _drain_to_eof(line_q)
                     process.communicate()
-                    return _timeout_payload(cli, processor, timeout_ms)
+                    return _timeout_payload(cli, processor, timeout_ms, process.returncode)
                 if enforce_stagnation and now >= stagnation_deadline:
                     _signal_process_group(process, signal.SIGKILL)
                     _drain_to_eof(line_q)
                     process.communicate()
-                    return _stagnation_payload(cli, processor, stagnation_timeout_ms)
+                    return _stagnation_payload(
+                        cli, processor, stagnation_timeout_ms, process.returncode
+                    )
                 event, session_id = processor.get_progress()
                 _emit_progress(
                     progress_stream, cli, "heartbeat", event, started_at, session_id
@@ -258,9 +406,14 @@ def _drive_process(
                     f"Sub-agent output exceeded {max_stdout_chars} characters. "
                     "Retry with a narrower task.",
                     partial_result=processor.get_result(),
+                    cli_exit_code=process.returncode,
+                    termination_reason="output_limit",
                 )
             if not saw_terminal:
                 terminal = processor.process_line(line)
+                blocker = (
+                    processor.get_tool_error_loop() if fail_fast_tool_errors else None
+                )
                 event, session_id = processor.get_progress()
                 progress_revision = processor.get_progress_revision()
                 if progress_revision != last_progress_revision:
@@ -271,8 +424,15 @@ def _drive_process(
                         progress_stream, cli, "activity", event, started_at, session_id
                     )
                     last_progress_event = event
+                if blocker is not None:
+                    _signal_process_group(process, signal.SIGKILL)
+                    _drain_to_eof(line_q)
+                    process.communicate()
+                    return _tool_error_loop_payload(
+                        cli, processor, blocker, process.returncode
+                    )
                 if terminal:
-                    _signal_process_group(process, signal.SIGTERM)
+                    terminated_by_us = _terminate_after_terminal(process)
                     saw_terminal = True
 
         # Allow a short graceful-exit window before killing the process.
@@ -282,11 +442,14 @@ def _drive_process(
         except subprocess.TimeoutExpired:
             _signal_process_group(process, signal.SIGKILL)
             _, stderr = process.communicate()
-            return _timeout_payload(cli, processor, timeout_ms)
+            return _timeout_payload(cli, processor, timeout_ms, process.returncode)
 
         result = processor.get_result()
         if result is None:
             processor.process_complete_output("".join(stdout_lines))
+            result = processor.get_result()
+        if result is None and process.returncode == 0 and allow_dialogue_fallback:
+            processor.promote_clean_exit_dialogue_result()
             result = processor.get_result()
 
         return build_final_response(
@@ -295,14 +458,18 @@ def _drive_process(
             result,
             stdout_lines,
             stderr,
-            terminated_by_us=saw_terminal,
+            terminated_by_us=terminated_by_us,
         )
     except (OSError, ValueError) as e:
         _signal_process_group(process, signal.SIGKILL)
         # Reap before callers clean up per-run resources.
         process.wait()
         return _error_response(
-            cli, 1, f"{type(e).__name__}: {e}", partial_result=processor.get_result()
+            cli,
+            1,
+            f"{type(e).__name__}: {e}",
+            partial_result=processor.get_result(),
+            cli_exit_code=process.returncode,
         )
 
 
@@ -330,6 +497,9 @@ def _spawn_and_drive(
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
     semantic_timeout_ms: int | None = None,
+    allowed_commands: tuple[str, ...] = (),
+    fail_fast_tool_errors: bool = False,
+    allow_dialogue_fallback: bool = False,
 ) -> dict:
     try:
         # Prevent CLIs from waiting for interactive input.
@@ -365,6 +535,9 @@ def _spawn_and_drive(
         progress_stream=progress_stream,
         max_stdout_chars=max_stdout_chars,
         semantic_timeout_ms=semantic_timeout_ms,
+        allowed_commands=allowed_commands,
+        fail_fast_tool_errors=fail_fast_tool_errors,
+        allow_dialogue_fallback=allow_dialogue_fallback,
     )
 
 
@@ -389,7 +562,12 @@ def _isolated_opencode_env(env_override: dict | None, temp_dir: str) -> dict:
     return {**(env_override or {}), "XDG_DATA_HOME": data_home, "XDG_STATE_HOME": state_home}
 
 
-def execute_agent(inv: AgentInvocation, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict:
+def execute_agent(
+    inv: AgentInvocation,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    *,
+    allow_dialogue_fallback: bool = False,
+) -> dict:
     command, args, env_override = build_invocation_args(inv)
 
     if inv.cli == "opencode":
@@ -409,5 +587,12 @@ def execute_agent(inv: AgentInvocation, timeout_ms: int = DEFAULT_TIMEOUT_MS) ->
         inv.cwd,
         inv.cli,
         timeout_ms,
-        semantic_timeout_ms=timeout_ms if inv.permission == "safe-edit" else None,
+        semantic_timeout_ms=(
+            timeout_ms
+            if inv.permission == "safe-edit" or inv.cli in _SEMANTIC_PROGRESS_CLIS
+            else None
+        ),
+        allowed_commands=inv.allowed_commands,
+        fail_fast_tool_errors=inv.permission == "safe-edit",
+        allow_dialogue_fallback=allow_dialogue_fallback,
     )
