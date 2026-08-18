@@ -142,8 +142,14 @@ child exits 0 without a usable terminal result, the runner returns
 as having exited 1. Claude-family `--dialogue` invocations use the CLI's
 `--json-schema` transport contract and normalize the terminal
 `structured_output`; invalid model output is retried by the CLI and ends as an
-explicit structured-output error if it cannot converge. The legacy envelope
-path remains available for non-Claude backends and compatibility: if the child
+explicit structured-output error if it cannot converge. If that transport
+emits a schema-valid `StructuredOutput` tool call and its matching successful
+`tool_result` but omits the final result event before a clean exit, the runner
+recovers the confirmed payload with
+`termination_reason=structured_tool_result`. Unconfirmed calls, error tool
+results, non-schema invocations, and nonzero exits remain errors. The legacy
+envelope path remains available for non-Claude backends and compatibility: if
+the child
 exits 0 and its last complete assistant message ends with a
 `<subagent_result>` envelope, the runner recovers it through
 `termination_reason=assistant_envelope` and applies the same strict semantic

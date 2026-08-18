@@ -147,6 +147,9 @@ class StreamProcessor:
         )
         self._tool_commands: dict[str, str] = {}
         self._tool_names: dict[str, str] = {}
+        self._structured_tool_inputs: dict[str, dict] = {}
+        self._latest_structured_tool_id: str | None = None
+        self._confirmed_structured_output: dict | None = None
         self._last_tool_command: str | None = None
         self._last_tool_name: str | None = None
         self._permission_denial_count = 0
@@ -307,6 +310,18 @@ class StreamProcessor:
                 tool_id = item.get("id") or item.get("tool_use_id")
                 if isinstance(tool_id, str) and isinstance(name, str):
                     self._tool_names[tool_id] = name
+                if self.allow_structured_output and name == "StructuredOutput":
+                    self._latest_structured_tool_id = None
+                    self._confirmed_structured_output = None
+                    self._structured_tool_inputs.clear()
+                if (
+                    self.allow_structured_output
+                    and name == "StructuredOutput"
+                    and isinstance(tool_id, str)
+                    and isinstance(tool_input, dict)
+                ):
+                    self._latest_structured_tool_id = tool_id
+                    self._structured_tool_inputs[tool_id] = dict(tool_input)
                 if name == "Bash" and isinstance(command, str):
                     self._last_tool_command = command
                     if isinstance(tool_id, str):
@@ -314,9 +329,24 @@ class StreamProcessor:
             elif item_type == "tool_result":
                 self.last_event = "tool_result:error" if item.get("is_error") else "tool_result"
                 if item.get("is_error"):
+                    tool_use_id = item.get("tool_use_id")
+                    if tool_use_id == self._latest_structured_tool_id:
+                        self._latest_structured_tool_id = None
+                        self._confirmed_structured_output = None
                     self._observe_tool_error(item)
                 else:
                     self._observe_tool_success(item)
+                    tool_use_id = item.get("tool_use_id")
+                    if (
+                        self.allow_structured_output
+                        and isinstance(tool_use_id, str)
+                        and tool_use_id == self._latest_structured_tool_id
+                        and self._tool_names.get(tool_use_id) == "StructuredOutput"
+                        and tool_use_id in self._structured_tool_inputs
+                    ):
+                        self._confirmed_structured_output = (
+                            self._structured_tool_inputs[tool_use_id]
+                        )
                     self._mark_semantic_progress(item)
             elif item_type == "thinking":
                 self.last_event = "thinking"
@@ -464,6 +494,25 @@ class StreamProcessor:
             "is_error": False,
             "result": report,
             "terminal_source": "assistant_envelope",
+        }
+        if self.session_id:
+            self.result_json["session_id"] = self.session_id
+        return True
+
+    def promote_clean_exit_structured_result(self) -> bool:
+        """Recover a StructuredOutput payload confirmed by its tool result."""
+        if (
+            self.result_json is not None
+            or not self.allow_structured_output
+            or self._confirmed_structured_output is None
+        ):
+            return False
+        self.result_json = {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "structured_output": self._confirmed_structured_output,
+            "terminal_source": "structured_tool_result",
         }
         if self.session_id:
             self.result_json["session_id"] = self.session_id
