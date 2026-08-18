@@ -287,6 +287,7 @@ Bounded writer.
         self.assertEqual(exited.exception.code, 0)
         invocation = execute.call_args.args[0]
         self.assertIn("Choose JSON.", invocation.system_context)
+        self.assertTrue(execute.call_args.kwargs["allow_dialogue_fallback"])
         payload = __import__("json").loads(stdout.getvalue())
         self.assertEqual(payload["agent_status"], "DONE")
 

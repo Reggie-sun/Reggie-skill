@@ -139,7 +139,12 @@ result can combine transport success with a nonzero raw `cli_exit_code`. If the
 child exits 0 without a usable terminal result, the runner returns
 `status=error`, `exit_code=1`, `cli_exit_code=0`, and
 `termination_reason=missing_terminal_result`; it does not misreport the child
-as having exited 1.
+as having exited 1. One bounded exception applies to `--dialogue`: if the child
+exits 0 and its last complete assistant message ends with a
+`<subagent_result>` envelope, the runner recovers that message and reports
+`termination_reason=assistant_envelope`; the existing strict dialogue validator
+still decides whether the envelope is valid. Plain text, non-dialogue runs, and
+nonzero child exits remain errors.
 
 **By status:**
 

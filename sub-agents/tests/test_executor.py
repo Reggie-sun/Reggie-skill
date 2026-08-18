@@ -47,6 +47,7 @@ def _drive_test_process(
     semantic_timeout_ms: int | None = None,
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = True,
+    allow_dialogue_fallback: bool = False,
 ) -> dict:
     process = _python_process(source)
     try:
@@ -59,6 +60,7 @@ def _drive_test_process(
             semantic_timeout_ms=semantic_timeout_ms,
             allowed_commands=allowed_commands,
             fail_fast_tool_errors=fail_fast_tool_errors,
+            allow_dialogue_fallback=allow_dialogue_fallback,
         )
     finally:
         if process.poll() is None:
@@ -563,6 +565,72 @@ print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
             result["error"],
             "CLI exited with code 0 without a usable terminal result",
         )
+
+    def test_clean_dialogue_exit_promotes_final_assistant_envelope(self) -> None:
+        report = (
+            "Read-only findings.\n"
+            '<subagent_result>{"status":"DONE_WITH_CONCERNS",'
+            '"summary":"Mapped the lifecycle","questions":[],"state_file":null,'
+            '"concerns":["Parent verification required"]}</subagent_result>'
+        )
+        source = f"""
+import json
+print(json.dumps({{
+    "type": "assistant",
+    "message": {{"content": [{{"type": "text", "text": {report!r}}}]}}
+}}), flush=True)
+"""
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_dialogue_fallback=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["transport_exit_code"], 0)
+        self.assertEqual(result["cli_exit_code"], 0)
+        self.assertEqual(result["termination_reason"], "assistant_envelope")
+        self.assertEqual(result["result"], report)
+
+    def test_clean_non_dialogue_exit_keeps_missing_terminal_error(self) -> None:
+        report = (
+            "Read-only findings.\n"
+            '<subagent_result>{"status":"DONE","summary":"Mapped",'
+            '"questions":[],"state_file":null,"concerns":[]}</subagent_result>'
+        )
+        source = f"""
+import json
+print(json.dumps({{
+    "type": "assistant",
+    "message": {{"content": [{{"type": "text", "text": {report!r}}}]}}
+}}), flush=True)
+"""
+
+        result = _drive_test_process(source, io.StringIO(), timeout_ms=1_000)
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["termination_reason"], "missing_terminal_result")
+
+    def test_dialogue_fallback_rejects_plain_assistant_text(self) -> None:
+        source = """
+import json
+print(json.dumps({
+    "type": "assistant",
+    "message": {"content": [{"type": "text", "text": "Looks complete."}]}
+}), flush=True)
+"""
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_dialogue_fallback=True,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["termination_reason"], "missing_terminal_result")
 
     def test_claude_success_subtype_with_zero_exit_is_transport_success(self) -> None:
         report = (

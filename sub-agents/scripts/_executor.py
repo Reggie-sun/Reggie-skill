@@ -89,6 +89,8 @@ def build_final_response(
 
     if terminated_by_us:
         termination_reason = "terminal_event"
+    elif result and result.get("terminal_source") == "assistant_envelope":
+        termination_reason = "assistant_envelope"
     elif not result and cli_exit_code == 0:
         termination_reason = "missing_terminal_result"
     elif cli_exit_code == 0:
@@ -321,6 +323,7 @@ def _drive_process(
     semantic_timeout_ms: int | None = None,
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = False,
+    allow_dialogue_fallback: bool = False,
 ) -> dict:
     if progress_stream is None:
         progress_stream = sys.stderr
@@ -445,6 +448,9 @@ def _drive_process(
         if result is None:
             processor.process_complete_output("".join(stdout_lines))
             result = processor.get_result()
+        if result is None and process.returncode == 0 and allow_dialogue_fallback:
+            processor.promote_clean_exit_dialogue_result()
+            result = processor.get_result()
 
         return build_final_response(
             cli,
@@ -493,6 +499,7 @@ def _spawn_and_drive(
     semantic_timeout_ms: int | None = None,
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = False,
+    allow_dialogue_fallback: bool = False,
 ) -> dict:
     try:
         # Prevent CLIs from waiting for interactive input.
@@ -530,6 +537,7 @@ def _spawn_and_drive(
         semantic_timeout_ms=semantic_timeout_ms,
         allowed_commands=allowed_commands,
         fail_fast_tool_errors=fail_fast_tool_errors,
+        allow_dialogue_fallback=allow_dialogue_fallback,
     )
 
 
@@ -554,7 +562,12 @@ def _isolated_opencode_env(env_override: dict | None, temp_dir: str) -> dict:
     return {**(env_override or {}), "XDG_DATA_HOME": data_home, "XDG_STATE_HOME": state_home}
 
 
-def execute_agent(inv: AgentInvocation, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict:
+def execute_agent(
+    inv: AgentInvocation,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
+    *,
+    allow_dialogue_fallback: bool = False,
+) -> dict:
     command, args, env_override = build_invocation_args(inv)
 
     if inv.cli == "opencode":
@@ -581,4 +594,5 @@ def execute_agent(inv: AgentInvocation, timeout_ms: int = DEFAULT_TIMEOUT_MS) ->
         ),
         allowed_commands=inv.allowed_commands,
         fail_fast_tool_errors=inv.permission == "safe-edit",
+        allow_dialogue_fallback=allow_dialogue_fallback,
     )

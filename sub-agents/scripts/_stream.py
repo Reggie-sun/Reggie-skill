@@ -18,6 +18,10 @@ _PERMISSION_DENIAL_MARKERS = (
     "tool use was denied",
     "has been denied",
 )
+_DIALOGUE_ENVELOPE_AT_END = re.compile(
+    r"<subagent_result>.*</subagent_result>\s*\Z",
+    re.DOTALL,
+)
 
 
 def _tool_result_text(content: object) -> str:
@@ -130,6 +134,7 @@ class StreamProcessor:
         self.opencode_parts = []
         self.session_id = None
         self.partial_text_parts = []
+        self.last_assistant_text: str | None = None
         self.last_event = "started"
         self.progress_revision = 0
         self._semantic_events = set()
@@ -283,6 +288,7 @@ class StreamProcessor:
         if not isinstance(content, list):
             return
 
+        assistant_text_parts = []
         for item in content:
             if not isinstance(item, dict):
                 continue
@@ -317,10 +323,13 @@ class StreamProcessor:
                 text = item.get("text")
                 if isinstance(text, str) and text.strip():
                     self._mark_semantic_progress(item)
+                    assistant_text_parts.append(text.strip())
                     # Partial output is diagnostic context, not an unbounded transcript.
                     current_size = sum(len(part) for part in self.partial_text_parts)
                     if current_size < 64 * 1024:
                         self.partial_text_parts.append(text.strip())
+        if event_type == "assistant" and assistant_text_parts:
+            self.last_assistant_text = "\n".join(assistant_text_parts)
 
     def _process_gemini_line(self, data: dict) -> bool:
         if data.get("type") == "message" and data.get("role") == "assistant":
@@ -435,6 +444,24 @@ class StreamProcessor:
             return self._process_grok_line(data)
 
         return False
+
+    def promote_clean_exit_dialogue_result(self) -> bool:
+        """Recover a final dialogue envelope when Claude omits ``type=result``."""
+        if self.result_json is not None or not self.last_assistant_text:
+            return False
+        report = self.last_assistant_text.strip()
+        if not _DIALOGUE_ENVELOPE_AT_END.search(report):
+            return False
+        self.result_json = {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": report,
+            "terminal_source": "assistant_envelope",
+        }
+        if self.session_id:
+            self.result_json["session_id"] = self.session_id
+        return True
 
     def get_result(self):
         return self.result_json

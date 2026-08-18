@@ -165,6 +165,7 @@ def main() -> None:
         result = execute_agent(
             invocation,
             timeout_ms=_resolve_timeout(args.timeout, agent_timeout_ms),
+            allow_dialogue_fallback=args.dialogue,
         )
     except ValueError as e:
         _print_error(str(e), cli=cli)

@@ -70,6 +70,11 @@ commit so a denied commit grant cannot waste an otherwise completed change.
 - A child exit of 0 without a parsed terminal result is a transport error with
   `termination_reason=missing_terminal_result`, normalized `exit_code=1`, and
   raw `cli_exit_code=0`; diagnostics must not describe it as child exit 1.
+- For `--dialogue` only, a clean child exit whose last complete assistant
+  message ends with `<subagent_result>` may recover through
+  `termination_reason=assistant_envelope`; strict dialogue normalization still
+  rejects malformed or contradictory envelopes. Non-dialogue/plain-text and
+  nonzero-exit cases remain transport errors.
 - `agent_status` describes the bounded dialogue task and never overrides a
   transport error. Runner-detected denial loops use `agent_status=BLOCKED`.
 
