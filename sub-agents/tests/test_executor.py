@@ -48,6 +48,7 @@ def _drive_test_process(
     allowed_commands: tuple[str, ...] = (),
     fail_fast_tool_errors: bool = True,
     allow_dialogue_fallback: bool = False,
+    allow_structured_output: bool = False,
 ) -> dict:
     process = _python_process(source)
     try:
@@ -61,6 +62,7 @@ def _drive_test_process(
             allowed_commands=allowed_commands,
             fail_fast_tool_errors=fail_fast_tool_errors,
             allow_dialogue_fallback=allow_dialogue_fallback,
+            allow_structured_output=allow_structured_output,
         )
     finally:
         if process.poll() is None:
@@ -593,6 +595,84 @@ print(json.dumps({{
         self.assertEqual(result["cli_exit_code"], 0)
         self.assertEqual(result["termination_reason"], "assistant_envelope")
         self.assertEqual(result["result"], report)
+
+    def test_structured_output_result_is_a_usable_terminal_event(self) -> None:
+        structured_output = {
+            "status": "DONE",
+            "summary": "Mapped the lifecycle",
+            "result": "Detailed findings.",
+            "questions": [],
+            "state_file": None,
+            "concerns": [],
+        }
+        source = f"""
+import json
+print(json.dumps({{
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "structured_output": {structured_output!r}
+}}), flush=True)
+"""
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_structured_output=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["termination_reason"], "cli_exit")
+        self.assertEqual(result["structured_output"], structured_output)
+
+    def test_non_schema_invocations_reject_structured_only_terminal_events(self) -> None:
+        source = """
+import json
+print(json.dumps({
+    "type": "result",
+    "subtype": "success",
+    "is_error": False,
+    "structured_output": {"unexpected": True}
+}), flush=True)
+"""
+
+        for cli in ("claude", "cursor-agent"):
+            with self.subTest(cli=cli):
+                result = _drive_test_process(
+                    source,
+                    io.StringIO(),
+                    cli=cli,
+                    timeout_ms=1_000,
+                )
+
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(
+                    result["termination_reason"],
+                    "missing_terminal_result",
+                )
+
+    def test_structured_output_retry_exhaustion_is_an_explicit_error(self) -> None:
+        result = build_final_response(
+            "minimax",
+            0,
+            {
+                "type": "result",
+                "subtype": "error_max_structured_output_retries",
+                "is_error": True,
+                "status": "error",
+            },
+            [],
+            "",
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["transport_exit_code"], 1)
+        self.assertEqual(result["termination_reason"], "cli_exit")
+        self.assertEqual(
+            result["error"],
+            "CLI reported error_max_structured_output_retries",
+        )
 
     def test_clean_non_dialogue_exit_keeps_missing_terminal_error(self) -> None:
         report = (

@@ -120,6 +120,7 @@ class StreamProcessor:
         cli: str,
         allowed_commands: tuple[str, ...] = (),
         count_tool_requests_as_progress: bool = False,
+        allow_structured_output: bool = False,
     ):
         self.cli = cli
         try:
@@ -140,6 +141,7 @@ class StreamProcessor:
         self._semantic_events = set()
         self.allowed_commands = allowed_commands
         self.count_tool_requests_as_progress = count_tool_requests_as_progress
+        self.allow_structured_output = allow_structured_output
         self._allowed_command_argv = tuple(
             (command, parse_command_argv(command)) for command in allowed_commands
         )
@@ -411,7 +413,11 @@ class StreamProcessor:
             self.result_json = {**data, "status": "error"}
             return True
 
-        if not isinstance(data.get("result"), str):
+        has_text_result = isinstance(data.get("result"), str)
+        has_structured_result = self.allow_structured_output and isinstance(
+            data.get("structured_output"), dict
+        )
+        if not has_text_result and not has_structured_result:
             return False
         self.result_json = data
         return True

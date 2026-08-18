@@ -10,6 +10,9 @@ from _constants import SUPPORTED_CLIS_HELP, format_concatenated_prompt
 from _loader import DEFAULT_PERMISSION
 
 
+CLAUDE_FAMILY_CLIS = frozenset({"claude", "glm", "kimi", "minimax"})
+
+
 @dataclass(frozen=True)
 class AgentInvocation:
     cli: str
@@ -22,6 +25,7 @@ class AgentInvocation:
     effort: str | None = None
     allowed_commands: tuple[str, ...] = ()
     allowed_paths: tuple[str, ...] = ()
+    structured_output_schema: str | None = None
 
 
 def parse_command_argv(command: str) -> tuple[str, ...]:
@@ -177,7 +181,7 @@ def effort_flags(cli: str, effort: str | None) -> list:
 
 def _invocation_flags(inv: AgentInvocation) -> list:
     flags = permission_flags(inv.cli, inv.permission)
-    claude_family = inv.cli in ("claude", "glm", "kimi", "minimax")
+    claude_family = inv.cli in CLAUDE_FAMILY_CLIS
     if inv.permission == "safe-edit" and claude_family and not inv.allowed_paths:
         raise ValueError(
             "Claude-family safe-edit requires at least one explicit --allow-path."
@@ -221,6 +225,23 @@ def _invocation_flags(inv: AgentInvocation) -> list:
         flags.extend(["--allowedTools", *allowed_rules])
     if inv.model:
         flags.extend(["--model", inv.model])
+    if inv.structured_output_schema is not None:
+        if not claude_family:
+            raise ValueError(
+                "Structured output schema requires a Claude-family invocation."
+            )
+        try:
+            schema = json.loads(inv.structured_output_schema)
+        except json.JSONDecodeError as exc:
+            raise ValueError("Structured output schema must be valid JSON.") from exc
+        if not isinstance(schema, dict):
+            raise ValueError("Structured output schema must be a JSON object.")
+        if "--tools" in flags:
+            tools_index = flags.index("--tools") + 1
+            tools = flags[tools_index].split(",")
+            if "StructuredOutput" not in tools:
+                flags[tools_index] += ",StructuredOutput"
+        flags.extend(["--json-schema", inv.structured_output_schema])
     flags.extend(effort_flags(inv.cli, inv.effort))
     return flags
 

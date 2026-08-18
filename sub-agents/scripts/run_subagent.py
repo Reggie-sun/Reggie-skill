@@ -10,9 +10,13 @@ from pathlib import Path
 # Ensure sibling modules import correctly when invoked via absolute path.
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _builder import AgentInvocation  # noqa: E402
+from _builder import CLAUDE_FAMILY_CLIS, AgentInvocation  # noqa: E402
 from _constants import DEFAULT_TIMEOUT_MS, SUPPORTED_CLIS_HELP  # noqa: E402
-from _dialogue import build_dialogue_context, normalize_dialogue_result  # noqa: E402
+from _dialogue import (  # noqa: E402
+    build_dialogue_context,
+    dialogue_json_schema,
+    normalize_dialogue_result,
+)
 from _executor import execute_agent  # noqa: E402
 from _loader import get_agents_dir, list_agents, load_agent  # noqa: E402
 from _resolver import resolve_cli  # noqa: E402
@@ -133,6 +137,7 @@ def main() -> None:
         sys.exit(1)
 
     cli = args.cli or resolve_cli(run_agent_cli)
+    structured_dialogue = args.dialogue and cli in CLAUDE_FAMILY_CLIS
     if args.parent_answer_file and not args.dialogue:
         _print_error("--parent-answer-file requires --dialogue.", cli=cli)
         sys.exit(1)
@@ -143,6 +148,7 @@ def main() -> None:
                 system_context,
                 args.cwd,
                 args.parent_answer_file,
+                structured_output=structured_dialogue,
             )
         except (OSError, UnicodeError, ValueError) as e:
             _print_error(str(e), cli=cli)
@@ -159,6 +165,9 @@ def main() -> None:
         effort=effort,
         allowed_commands=tuple(args.allow_command),
         allowed_paths=tuple(args.allow_path),
+        structured_output_schema=(
+            dialogue_json_schema() if structured_dialogue else None
+        ),
     )
 
     try:

@@ -19,6 +19,27 @@ from _builder import (  # noqa: E402
 
 
 class MiniMaxEffortTests(unittest.TestCase):
+    def test_minimax_structured_output_schema_is_enforced_by_claude_transport(self) -> None:
+        schema = '{"type":"object","required":["status","result"]}'
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="health check",
+            cwd="/tmp",
+            permission="read-only",
+            structured_output_schema=schema,
+        )
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}):
+            command, args, _ = build_invocation_args(invocation)
+
+        self.assertEqual(command, "claude")
+        schema_index = args.index("--json-schema")
+        self.assertEqual(args[schema_index + 1], schema)
+        self.assertIn(
+            "StructuredOutput",
+            args[args.index("--tools") + 1].split(","),
+        )
+
     def test_max_effort_is_forwarded_to_claude_transport(self) -> None:
         invocation = AgentInvocation(
             cli="minimax",
