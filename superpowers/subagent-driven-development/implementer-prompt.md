@@ -161,13 +161,17 @@ Subagent (general-purpose):
     - Self-review findings (if any)
     - Any issues or concerns
 
-    Then report back with ONLY (under 15 lines — the detail lives in the
+    Then report back concisely (under 15 lines — the detail lives in the
     report file):
-    - **Status:** DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
     - Commits created (short SHA + subject)
     - One-line test summary (e.g. "14/14 passing, output pristine")
     - Your concerns, if any
     - The report file path
+
+    When the runner supplies a `Bounded Dialogue Protocol`, the final content
+    MUST be its single `<subagent_result>` JSON envelope. Use its `status`,
+    `summary`, `questions`, `state_file`, and `concerns` schema exactly; do not
+    emit the old Markdown `**Status:**` line as a substitute.
 
     If BLOCKED or NEEDS_CONTEXT, put the specifics in the final message
     itself — the controller acts on it directly.

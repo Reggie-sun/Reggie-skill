@@ -27,6 +27,14 @@ class MiniMaxSddRoutingTests(unittest.TestCase):
         self.assertIn("git commit --only", skill)
         self.assertIn("git commit --only", implementer)
 
+    def test_external_roles_use_bounded_artifact_dialogue(self) -> None:
+        skill = (SDD_DIR / "SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("--dialogue", skill)
+        self.assertIn("--parent-answer-file", skill)
+        self.assertIn("`NEEDS_CONTEXT` is a dialogue turn", skill)
+        self.assertIn("`DONE` is an agent claim", skill)
+
     def test_all_review_templates_use_native_reviewer(self) -> None:
         for filename in ("task-reviewer-prompt.md", "re-review-prompt.md"):
             with self.subTest(filename=filename):

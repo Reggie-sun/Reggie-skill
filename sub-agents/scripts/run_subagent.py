@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from _builder import AgentInvocation  # noqa: E402
 from _constants import DEFAULT_TIMEOUT_MS, SUPPORTED_CLIS_HELP  # noqa: E402
+from _dialogue import build_dialogue_context, normalize_dialogue_result  # noqa: E402
 from _executor import execute_agent  # noqa: E402
 from _loader import get_agents_dir, list_agents, load_agent  # noqa: E402
 from _resolver import resolve_cli  # noqa: E402
@@ -67,6 +68,20 @@ def main() -> None:
             "safe-edit agent may edit; repeat for multiple ownership paths"
         ),
     )
+    parser.add_argument(
+        "--dialogue",
+        action="store_true",
+        help="Require the bounded multi-turn response protocol",
+    )
+    parser.add_argument(
+        "--parent-answer-file",
+        action="append",
+        default=[],
+        help=(
+            "Prior-turn parent answer artifact inside --cwd; requires --dialogue "
+            "and may be repeated"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -110,6 +125,21 @@ def main() -> None:
         sys.exit(1)
 
     cli = args.cli or resolve_cli(run_agent_cli)
+    if args.parent_answer_file and not args.dialogue:
+        _print_error("--parent-answer-file requires --dialogue.", cli=cli)
+        sys.exit(1)
+
+    if args.dialogue:
+        try:
+            system_context = build_dialogue_context(
+                system_context,
+                args.cwd,
+                args.parent_answer_file,
+            )
+        except (OSError, UnicodeError, ValueError) as e:
+            _print_error(str(e), cli=cli)
+            sys.exit(1)
+
     invocation = AgentInvocation(
         cli=cli,
         prompt=args.prompt,
@@ -131,6 +161,9 @@ def main() -> None:
     except ValueError as e:
         _print_error(str(e), cli=cli)
         sys.exit(1)
+
+    if args.dialogue:
+        result = normalize_dialogue_result(result, args.cwd)
 
     print(json.dumps(result, ensure_ascii=False))
     sys.exit(0 if result["status"] == "success" else 1)

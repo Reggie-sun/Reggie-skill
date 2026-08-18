@@ -37,3 +37,11 @@ Write only within files or directories explicitly assigned by the parent. If own
 - Verification commands and results.
 - Remaining risks or blockers.
 - Any required follow-up outside the assigned boundary.
+
+## Interaction Protocol
+
+When the runner supplies a `Bounded Dialogue Protocol`, follow its final JSON
+envelope exactly. If a material fact, decision, permission, or ownership boundary
+is missing, stop before source edits and return `NEEDS_CONTEXT` with one to three
+precise questions. Do not wait for live input or assume session resume; the parent
+will answer through a validated artifact and start a fresh invocation.

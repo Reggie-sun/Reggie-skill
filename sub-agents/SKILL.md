@@ -30,6 +30,8 @@ Extract parameters from user's natural language request:
 | `--timeout` | Idle timeout explicitly requested by the user, converted to milliseconds; otherwise omit so the agent definition or global default applies |
 | `--allow-command` | Exact Bash command explicitly authorized for a Claude-family `safe-edit` agent; repeat once per command |
 | `--allow-path` | File or directory pattern relative to `--cwd` that a Claude-family `safe-edit` agent may edit; repeat once per ownership path |
+| `--dialogue` | Require the bounded task-state protocol for a fresh invocation |
+| `--parent-answer-file` | Validated prior-turn answer artifact inside `--cwd`; repeat as needed and use only with `--dialogue` |
 
 **Example**:
 "Run code-reviewer on src/"
@@ -90,10 +92,15 @@ list is empty, and rejects every Bash command not listed exactly.
 Append one `--allow-path <relative path>` per owned file or directory pattern;
 at least one is required for `safe-edit`, and edits outside those paths are
 denied non-interactively.
+For a task that may require parent clarification, append `--dialogue`. If the
+agent returns `NEEDS_CONTEXT`, write the answer to a UTF-8 artifact inside
+`--cwd` and fresh-dispatch the same task with
+`--dialogue --parent-answer-file <relative path>`. The answer artifact is
+context only: never add it to `--allow-path`, and never place credentials in it.
 
 ### Step 3: Handle Response
 
-Parse JSON output and check `status` field:
+Parse JSON output and check the transport `status` field:
 
 ```json
 {"result": "...", "exit_code": 0, "status": "success", "cli": "claude"}
@@ -106,6 +113,23 @@ Parse JSON output and check `status` field:
 | `success` | Task completed | Use `result` directly |
 | `partial` | Timeout but has output | Review partial `result`, may need retry |
 | `error` | Execution failed | Check `error` and `exit_code`; retry after satisfying the reported requirement |
+
+With `--dialogue`, also require `agent_status`; transport success alone never
+means that the task completed:
+
+| agent_status | Action |
+|--------------|--------|
+| `DONE` | Use the result and verify the claimed work |
+| `DONE_WITH_CONCERNS` | Inspect the concerns before proceeding |
+| `NEEDS_CONTEXT` | Answer its 1-3 questions in an artifact and fresh-dispatch with the same scope and permissions |
+| `BLOCKED` | Assess the blocker; do not repeat the unchanged dispatch |
+| `PROTOCOL_ERROR` | Correct the prompt/protocol once; do not infer completion from prose |
+
+Dialogue is bounded turn-taking, not an interactive subprocess. The runner
+uses `stdin=DEVNULL` and no session persistence. Parent answer files must be
+regular, non-symlink UTF-8 files inside `--cwd`, at most 64 KiB; the runner
+records their SHA-256 digest in injected context. A parent answer never grants
+commands, editable paths, or broader authority.
 
 For configuration or credential errors, retry after the required external
 configuration has changed.

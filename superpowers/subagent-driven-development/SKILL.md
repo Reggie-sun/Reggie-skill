@@ -210,6 +210,10 @@ Use the native named `reviewer` profile for every review gate:
    external `writer` for implementation and fix rounds. Use the native named
    `reviewer` for task review, scoped re-review, and final review.
 
+Pass `--dialogue` on every external explorer and writer dispatch. This enables
+bounded turn-taking through a strict task-state envelope; it does not create an
+interactive process or persistent session.
+
 The selected external definition owns any declared `run-agent`, `model`, `effort`,
 `timeout`, and `permission`; omitted fields use the runner's documented
 defaults. Do not pass `--cli`, model, effort, or a shorter timeout unless a
@@ -233,6 +237,24 @@ progress. Safe-edit writers use their transport idle timeout so a legitimate
 long-running test is not killed at 120 seconds; the same configured timeout
 also caps semantically stagnant retries, so repeated denials cannot run
 forever by emitting heartbeats.
+
+Treat transport `status` and task `agent_status` as separate gates. A transport
+`success` is not completion unless `agent_status` is `DONE` or
+`DONE_WITH_CONCERNS`. On `NEEDS_CONTEXT`, inspect the current diff before
+answering, require one to three precise questions, and place the answer in a
+non-secret UTF-8 artifact inside the task workspace. Fresh-dispatch the same
+task, report path, current state, ownership, command grants, and open findings
+with `--dialogue --parent-answer-file <artifact>`. Never include that artifact
+in `--allow-path`: it supplies context and grants no capability. Allow at most
+three clarification rounds for one task; then stop for direction or make a
+disclosed capability-based fallback. `NEEDS_CONTEXT` is a dialogue turn, not a
+backend failure or the one bounded failure retry below.
+
+If the runner returns `PROTOCOL_ERROR`, correct the protocol instruction and
+make one fresh retry. Never infer DONE from prose, Markdown, a clean diff, or a
+successful transport response. A material unresolved decision requires
+`NEEDS_CONTEXT` before source edits; if the agent edited first, inspect those
+changes as potentially invalid and do not silently adopt them.
 
 Do not switch away from MiniMax merely because one invocation times out,
 requests an ungranted command, or returns an incomplete report. Diagnose the
@@ -373,9 +395,18 @@ Implementer subagents report one of four statuses. Handle each appropriately:
 
 **DONE:** Generate the review package (`scripts/review-package PLAN_FILE BASE HEAD`, from this skill's directory — it prints the unique file path it wrote; BASE is the commit you recorded before dispatching the implementer — never `HEAD~1`, which silently drops all but the last commit of a multi-commit task), then dispatch the task reviewer with the printed path.
 
+`DONE` is an agent claim, not verification evidence. Before review packaging,
+the controller must inspect the owned diff and independently check the focused
+acceptance evidence. If either contradicts the report, fresh-dispatch a scoped
+fix with the exact observed mismatch; do not promote the task to review.
+
 **DONE_WITH_CONCERNS:** The implementer completed the work but flagged doubts. Read the concerns before proceeding. If the concerns are about correctness or scope, address them before review. If they're observations (e.g., "this file is getting large"), note them and proceed to review.
 
-**NEEDS_CONTEXT:** The implementer needs information that wasn't provided. Provide the missing context and re-dispatch.
+**NEEDS_CONTEXT:** The implementer needs information that wasn't provided.
+Inspect the current diff, answer all one-to-three questions in a validated
+artifact, and fresh-dispatch with the same scope and explicit permissions using
+`--dialogue --parent-answer-file`. Do not treat this as a backend failure retry,
+and do not let the answer artifact expand edit or command authority.
 
 **BLOCKED:** The implementer cannot complete the task. Assess the blocker:
 1. If it's a context problem, provide more context and re-dispatch with the same model

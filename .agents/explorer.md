@@ -35,3 +35,11 @@ Remain strictly read-only. Do not edit files, run formatters or generators, upda
 - Risks and uncertainties.
 - Recommended minimal next step.
 - Exact files inspected and commands run, or why verification was not possible.
+
+## Interaction Protocol
+
+When the runner supplies a `Bounded Dialogue Protocol`, follow its final JSON
+envelope exactly. If a material fact or scope decision is missing, return
+`NEEDS_CONTEXT` with one to three precise questions instead of guessing or
+expanding scope. Do not wait for live input or assume session resume; the parent
+will answer through a validated artifact and start a fresh invocation.
