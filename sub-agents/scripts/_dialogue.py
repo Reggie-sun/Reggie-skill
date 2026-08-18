@@ -44,7 +44,9 @@ def _protocol_error(result: dict, message: str) -> dict:
         **result,
         "status": "error",
         "exit_code": 2,
+        "transport_exit_code": 1,
         "agent_status": "PROTOCOL_ERROR",
+        "termination_reason": "dialogue_protocol_error",
         "error": f"Bounded dialogue protocol error: {message}",
     }
 

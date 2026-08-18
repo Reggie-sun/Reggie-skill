@@ -10,7 +10,12 @@ from unittest.mock import patch
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from _builder import AgentInvocation, build_invocation_args, permission_flags  # noqa: E402
+from _builder import (  # noqa: E402
+    AgentInvocation,
+    build_invocation_args,
+    parse_command_argv,
+    permission_flags,
+)
 
 
 class MiniMaxEffortTests(unittest.TestCase):
@@ -168,6 +173,51 @@ class ClaudeFamilyReadOnlyTests(unittest.TestCase):
             "A denial for any other command does not mean Bash is unavailable.",
             system_prompt,
         )
+
+    def test_command_grant_exposes_stable_argv_without_relaxing_exact_string(self) -> None:
+        double_quoted = 'git commit -m "test: replay proof"'
+        single_quoted = "git commit -m 'test: replay proof'"
+
+        self.assertEqual(
+            parse_command_argv(double_quoted),
+            ("git", "commit", "-m", "test: replay proof"),
+        )
+        self.assertEqual(parse_command_argv(double_quoted), parse_command_argv(single_quoted))
+
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="commit the verified change",
+            cwd="/tmp/project",
+            permission="safe-edit",
+            allowed_commands=(double_quoted,),
+            allowed_paths=("tests/test_widget.py",),
+        )
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}):
+            _, args, _ = build_invocation_args(invocation)
+
+        allowed = args[args.index("--allowedTools") + 1 :]
+        self.assertIn(f"Bash({double_quoted})", allowed)
+        self.assertNotIn(f"Bash({single_quoted})", allowed)
+        system_prompt = args[args.index("--system-prompt") + 1]
+        self.assertIn(
+            'argv=["git", "commit", "-m", "test: replay proof"]',
+            system_prompt,
+        )
+        self.assertIn("enforcement still uses the exact shell string", system_prompt)
+
+    def test_rejects_unparseable_allowed_command_quoting(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="implement",
+            cwd="/tmp",
+            permission="safe-edit",
+            allowed_commands=('git commit -m "unterminated',),
+            allowed_paths=("src/widget.py",),
+        )
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}):
+            with self.assertRaisesRegex(ValueError, "shell quoting"):
+                build_invocation_args(invocation)
 
     def test_rejects_unsafe_allowed_command_syntax(self) -> None:
         invocation = AgentInvocation(

@@ -111,6 +111,21 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["status"], "error")
         self.assertIn("concerns", normalized["error"].lower())
 
+    def test_done_with_concerns_preserves_successful_transport(self) -> None:
+        result = _transport_result(
+            "Read-only findings.\n"
+            '<subagent_result>{"status":"DONE_WITH_CONCERNS",'
+            '"summary":"Mapped the lifecycle","questions":[],"state_file":null,'
+            '"concerns":["Parent verification required"]}</subagent_result>'
+        )
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "DONE_WITH_CONCERNS")
+        self.assertEqual(normalized["result"], "Read-only findings.")
+        self.assertEqual(normalized["concerns"], ["Parent verification required"])
+
     def test_done_cannot_hide_concerns(self) -> None:
         result = _transport_result(
             '<subagent_result>{"status":"DONE","summary":"Implemented",'
@@ -123,6 +138,18 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["status"], "error")
         self.assertEqual(normalized["agent_status"], "PROTOCOL_ERROR")
         self.assertIn("DONE_WITH_CONCERNS", normalized["error"])
+
+    def test_blocked_status_remains_compatible(self) -> None:
+        result = _transport_result(
+            '<subagent_result>{"status":"BLOCKED","summary":"Command grant mismatch",'
+            '"questions":[],"state_file":null,"concerns":[]}</subagent_result>'
+        )
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "BLOCKED")
+        self.assertEqual(normalized["summary"], "Command grant mismatch")
 
 
 class DialogueContextTests(unittest.TestCase):

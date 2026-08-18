@@ -28,7 +28,7 @@ Extract parameters from user's natural language request:
 | `--cwd` | Current working directory (absolute path) |
 | `--cli` | Backend override explicitly requested by the user; otherwise omit |
 | `--timeout` | Idle timeout explicitly requested by the user, converted to milliseconds; otherwise omit so the agent definition or global default applies |
-| `--allow-command` | Exact Bash command explicitly authorized for a Claude-family `safe-edit` agent; repeat once per command |
+| `--allow-command` | Exact Bash shell string explicitly authorized for a Claude-family `safe-edit` agent; repeat once per command and preserve its quoting exactly |
 | `--allow-path` | File or directory pattern relative to `--cwd` that a Claude-family `safe-edit` agent may edit; repeat once per ownership path |
 | `--dialogue` | Require the bounded task-state protocol for a fresh invocation |
 | `--parent-answer-file` | Validated prior-turn answer artifact inside `--cwd`; repeat as needed and use only with `--dialogue` |
@@ -36,6 +36,20 @@ Extract parameters from user's natural language request:
 **Example**:
 "Run code-reviewer on src/"
 → `--agent code-reviewer --prompt "Review src/" --cwd $(pwd)`
+
+## Proportional Routing
+
+Keep tiny, precision fixes in the parent when they depend on dense shared
+context or when reloading that context costs more than the edit. Prefer an
+external writer for a bounded implementation unit with clear file ownership
+and enough independent work to justify a fresh context.
+
+Do not automatically bundle implementation, the full regression suite, and a
+Git commit into one external invocation. The parent should normally run final
+verification and commit already-completed work. Delegate a commit only when an
+autonomous checkpoint is itself part of the bounded task and its exact command
+has been confirmed before dispatch. A denied cleanup or commit command must not
+discard or obscure completed implementation.
 
 ## Important: Permission and Timeout
 
@@ -89,6 +103,9 @@ Append `--cli <backend>` when the user specifies a backend. Append
 For a Claude-family `safe-edit` agent, append one `--allow-command <exact command>`
 per authorized test or Git command. The runner exposes no Bash tool when this
 list is empty, and rejects every Bash command not listed exactly.
+Each grant must have valid shell quoting. The runner also parses it into argv
+for diagnostics, but argv equivalence never authorizes a differently quoted
+shell string. Copy the displayed exact grant rather than reconstructing it.
 Append one `--allow-path <relative path>` per owned file or directory pattern;
 at least one is required for `safe-edit`, and edits outside those paths are
 denied non-interactively.
@@ -103,8 +120,26 @@ context only: never add it to `--allow-path`, and never place credentials in it.
 Parse JSON output and check the transport `status` field:
 
 ```json
-{"result": "...", "exit_code": 0, "status": "success", "cli": "claude"}
+{"result":"...","status":"success","transport_exit_code":0,"exit_code":0,"cli_exit_code":-15,"termination_reason":"terminal_event","cli":"claude"}
 ```
+
+Treat status as three separate layers:
+
+| Layer | Fields | Meaning |
+|-------|--------|---------|
+| Runner transport | `status`, `transport_exit_code`, `termination_reason` | Whether `run_subagent.py` produced a usable terminal outcome; its OS exit is 0 only for `success` |
+| Child CLI process | `cli_exit_code` | Raw subprocess return code, including negative signals; `terminal_event` may intentionally stop the CLI after a complete result |
+| Dialogue task | `agent_status` | `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`, or `PROTOCOL_ERROR` when `--dialogue` is used or the safe-edit runner emits a blocker |
+
+`exit_code` is the normalized outcome code: 0 for a successful transport, 124
+for runner timeouts, 127 when the CLI is missing, and the abnormal child code
+when no successful terminal result exists. A spontaneous signal such as 143
+is an error; only a runner-authored `terminal_event` after a parsed terminal
+result can combine transport success with a nonzero raw `cli_exit_code`. If the
+child exits 0 without a usable terminal result, the runner returns
+`status=error`, `exit_code=1`, `cli_exit_code=0`, and
+`termination_reason=missing_terminal_result`; it does not misreport the child
+as having exited 1.
 
 **By status:**
 
@@ -125,6 +160,14 @@ means that the task completed:
 | `BLOCKED` | Assess the blocker; do not repeat the unchanged dispatch |
 | `PROTOCOL_ERROR` | Correct the prompt/protocol once; do not infer completion from prose |
 
+For `safe-edit`, three repeated same-tool permission denials or three equivalent
+tool errors terminate the child and return `status=error`, `agent_status=BLOCKED`,
+and a structured `blocker`. It includes the attempted command, exact grants,
+argv-equivalence diagnosis, and tool error. Do not repeat the unchanged
+dispatch; fix the grant or keep verification/commit in the parent. Successful
+unrelated tools or Bash commands do not clear a denied command family; a
+successful execution of that same Bash argv family does.
+
 Dialogue is bounded turn-taking, not an interactive subprocess. The runner
 uses `stdin=DEVNULL` and no session persistence. Parent answer files must be
 regular, non-symlink UTF-8 files inside `--cwd`, at most 64 KiB; the runner
@@ -134,14 +177,14 @@ commands, editable paths, or broader authority.
 For configuration or credential errors, retry after the required external
 configuration has changed.
 
-**By exit_code** (when status is `error`):
+**By exit_code** (when status is not `success`):
 
 | exit_code | Meaning | Resolution |
 |-----------|---------|------------|
-| 0 | Success | - |
 | 124 | Timeout | Increase `--timeout` or simplify task |
 | 127 | CLI not found | Install required CLI (claude, codex, etc.) |
-| 1 | General error | Check `error` field in response |
+| 1 | Runner/general error | Check `error`, `termination_reason`, and `blocker` |
+| other | Abnormal child exit | Inspect `cli_exit_code`; do not infer task success from dialogue prose |
 
 ## Agent Definition Location
 
@@ -183,7 +226,7 @@ How results should be structured.
 | `run-agent` | `codex`, `claude`, `cursor-agent`, `glm`, `kimi`, `minimax`, `grok`, `gemini`, `opencode` | Which CLI executes this agent |
 | `model` | Backend-specific model name (optional) | Model passed to the selected CLI; omit to use its configured default |
 | `effort` | Backend/model-specific reasoning level or OpenCode variant (optional) | Advanced: forwarded as an opaque value. Confirm support for the selected model before setting; omit to use its default. MiniMax uses Claude CLI's `--effort`; unsupported on `cursor-agent` and `gemini` |
-| `timeout` | Positive milliseconds (optional) | Per-agent transport idle timeout used when `--timeout` is omitted; read-only Claude-family runs also stop after 120 seconds without semantic progress, while safe-edit uses this configured timeout as its semantic-stagnation cap |
+| `timeout` | Positive milliseconds (optional) | Per-agent transport idle timeout used when `--timeout` is omitted; Claude-family read-only and safe-edit runs also use the resolved timeout as their semantic-stagnation cap |
 | `permission` | `read-only`, `safe-edit` (default), `yolo` | `read-only` for investigation, `safe-edit` for workspace edits, or `yolo` to bypass approvals and sandboxing |
 
 For Claude-based transports (`claude`, `glm`, `kimi`, and `minimax`),
@@ -196,8 +239,14 @@ nested-agent, network, plan-transition, and MCP tools. It exposes `Read`,
 `Glob`, `Grep`, `Write`, and `Edit`, but only repeated `--allow-path` rules
 approve edits; Bash appears only when at least one exact `--allow-command` is
 supplied. The runner also injects the resolved path and command grants into the
-agent's system context so a denied unlisted command is not mistaken for Bash
-being unavailable. Use repeated flags for explicit ownership, focused tests,
+agent's system context, including diagnostic argv, so a quoting mismatch is
+actionable and a denied unlisted command is not mistaken for Bash being
+unavailable. The runner fail-fast threshold counts denied/error results, not
+new tool IDs or repeated failure events as semantic progress. For read-only
+Claude-family agents, a distinct tool request or successful tool result is
+semantic progress; the same request repeated with only a new tool ID is not.
+This keeps active exploration alive without letting identical heartbeats evade
+the resolved agent timeout. Use repeated flags for explicit ownership, focused tests,
 and task-only Git commands the parent has authorized. Do not use `yolo` as a
 workaround for a missing path or command grant.
 

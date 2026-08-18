@@ -1,8 +1,52 @@
 from __future__ import annotations
 
 import json
+import re
+
+from _builder import parse_command_argv
 
 from _constants import SUPPORTED_CLIS_HELP
+
+
+_TOOL_ERROR_LOOP_THRESHOLD = 3
+_PERMISSION_DENIAL_MARKERS = (
+    "permission denied",
+    "permission rule",
+    "not in allowedtools",
+    "not allowed",
+    "requires permission",
+    "tool use was denied",
+    "has been denied",
+)
+
+
+def _tool_result_text(content: object) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        return " ".join(
+            part
+            for item in content
+            if (part := _tool_result_text(item))
+        ).strip()
+    if isinstance(content, dict):
+        for key in ("text", "content", "message", "error"):
+            if key in content:
+                return _tool_result_text(content[key])
+    return ""
+
+
+def _error_signature(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _command_family(command: str | None) -> tuple[str, ...] | None:
+    if command is None:
+        return None
+    try:
+        return ("argv", *parse_command_argv(command))
+    except ValueError:
+        return ("raw", command)
 
 
 def _is_string_delimiter(text: str, index: int) -> bool:
@@ -67,7 +111,12 @@ def _grok_json_result(data: dict) -> dict | None:
 class StreamProcessor:
     """Normalize supported CLI streams into a result payload."""
 
-    def __init__(self, cli: str):
+    def __init__(
+        self,
+        cli: str,
+        allowed_commands: tuple[str, ...] = (),
+        count_tool_requests_as_progress: bool = False,
+    ):
         self.cli = cli
         try:
             self._line_processor = _LINE_PROCESSORS[cli]
@@ -84,6 +133,124 @@ class StreamProcessor:
         self.last_event = "started"
         self.progress_revision = 0
         self._semantic_events = set()
+        self.allowed_commands = allowed_commands
+        self.count_tool_requests_as_progress = count_tool_requests_as_progress
+        self._allowed_command_argv = tuple(
+            (command, parse_command_argv(command)) for command in allowed_commands
+        )
+        self._tool_commands: dict[str, str] = {}
+        self._tool_names: dict[str, str] = {}
+        self._last_tool_command: str | None = None
+        self._last_tool_name: str | None = None
+        self._permission_denial_count = 0
+        self._permission_denial_tool: str | None = None
+        self._permission_denial_command_families: set[tuple[str, ...]] = set()
+        self._last_error_signature: str | None = None
+        self._last_error_tool: str | None = None
+        self._last_error_command_family: tuple[str, ...] | None = None
+        self._equivalent_error_count = 0
+        self._tool_error_loop: dict | None = None
+
+    def _grant_match(self, attempted_command: str | None) -> str:
+        if not attempted_command:
+            return "attempted_command_unavailable"
+        if attempted_command in self.allowed_commands:
+            return "exact_grant_present"
+        try:
+            attempted_argv = parse_command_argv(attempted_command)
+        except ValueError:
+            return "attempted_command_unparseable"
+        if any(attempted_argv == argv for _, argv in self._allowed_command_argv):
+            return "argv_equivalent_exact_string_mismatch"
+        return "command_not_authorized"
+
+    def _observe_tool_error(self, item: dict) -> None:
+        error_text = _tool_result_text(item.get("content")) or "Unknown tool error"
+        signature = _error_signature(error_text)
+        tool_use_id = item.get("tool_use_id")
+        tool_name = (
+            self._tool_names.get(tool_use_id)
+            if isinstance(tool_use_id, str)
+            else None
+        ) or self._last_tool_name
+        attempted_command = (
+            self._tool_commands.get(tool_use_id)
+            if isinstance(tool_use_id, str)
+            else None
+        )
+        if attempted_command is None and tool_name == "Bash":
+            attempted_command = self._last_tool_command
+        command_family = _command_family(attempted_command)
+        is_permission_denial = any(
+            marker in signature for marker in _PERMISSION_DENIAL_MARKERS
+        )
+        if is_permission_denial:
+            if tool_name == self._permission_denial_tool:
+                self._permission_denial_count += 1
+            else:
+                self._permission_denial_tool = tool_name
+                self._permission_denial_count = 1
+                self._permission_denial_command_families.clear()
+            if command_family is not None:
+                self._permission_denial_command_families.add(command_family)
+
+        if signature == self._last_error_signature and tool_name == self._last_error_tool:
+            self._equivalent_error_count += 1
+        else:
+            self._last_error_signature = signature
+            self._last_error_tool = tool_name
+            self._equivalent_error_count = 1
+        self._last_error_command_family = command_family
+
+        if self._permission_denial_count >= _TOOL_ERROR_LOOP_THRESHOLD:
+            self._tool_error_loop = {
+                "kind": "permission_denial_loop",
+                "occurrences": self._permission_denial_count,
+                "tool": tool_name,
+                "attempted_command": attempted_command,
+                "allowed_commands": list(self.allowed_commands),
+                "grant_match": self._grant_match(attempted_command),
+                "tool_error": error_text,
+            }
+        elif self._equivalent_error_count >= _TOOL_ERROR_LOOP_THRESHOLD:
+            self._tool_error_loop = {
+                "kind": "repeated_tool_error",
+                "occurrences": self._equivalent_error_count,
+                "tool": tool_name,
+                "attempted_command": attempted_command,
+                "allowed_commands": list(self.allowed_commands),
+                "grant_match": self._grant_match(attempted_command),
+                "tool_error": error_text,
+            }
+
+    def _observe_tool_success(self, item: dict) -> None:
+        tool_use_id = item.get("tool_use_id")
+        tool_name = (
+            self._tool_names.get(tool_use_id)
+            if isinstance(tool_use_id, str)
+            else None
+        ) or self._last_tool_name
+        command = (
+            self._tool_commands.get(tool_use_id)
+            if isinstance(tool_use_id, str)
+            else None
+        )
+        command_family = _command_family(command)
+        clears_denial = tool_name != "Bash" or (
+            command_family in self._permission_denial_command_families
+        )
+        if tool_name == self._permission_denial_tool and clears_denial:
+            self._permission_denial_count = 0
+            self._permission_denial_tool = None
+            self._permission_denial_command_families.clear()
+        clears_equivalent_error = (
+            tool_name != "Bash" or command_family == self._last_error_command_family
+        )
+        if tool_name == self._last_error_tool and clears_equivalent_error:
+            self._last_error_signature = None
+            self._last_error_tool = None
+            self._last_error_command_family = None
+            self._equivalent_error_count = 0
 
     def _mark_semantic_progress(self, item: dict) -> None:
         semantic_item = {
@@ -123,13 +290,28 @@ class StreamProcessor:
             if item_type == "tool_use":
                 name = item.get("name")
                 self.last_event = f"tool:{name}" if isinstance(name, str) else "tool"
-                self._mark_semantic_progress(item)
+                if self.count_tool_requests_as_progress:
+                    self._mark_semantic_progress(item)
+                if isinstance(name, str):
+                    self._last_tool_name = name
+                tool_input = item.get("input")
+                command = tool_input.get("command") if isinstance(tool_input, dict) else None
+                tool_id = item.get("id") or item.get("tool_use_id")
+                if isinstance(tool_id, str) and isinstance(name, str):
+                    self._tool_names[tool_id] = name
+                if name == "Bash" and isinstance(command, str):
+                    self._last_tool_command = command
+                    if isinstance(tool_id, str):
+                        self._tool_commands[tool_id] = command
             elif item_type == "tool_result":
                 self.last_event = "tool_result:error" if item.get("is_error") else "tool_result"
-                self._mark_semantic_progress(item)
+                if item.get("is_error"):
+                    self._observe_tool_error(item)
+                else:
+                    self._observe_tool_success(item)
+                    self._mark_semantic_progress(item)
             elif item_type == "thinking":
                 self.last_event = "thinking"
-                self._mark_semantic_progress(item)
             elif item_type == "text":
                 self.last_event = "assistant"
                 text = item.get("text")
@@ -281,6 +463,9 @@ class StreamProcessor:
 
     def get_progress_revision(self) -> int:
         return self.progress_revision
+
+    def get_tool_error_loop(self) -> dict | None:
+        return self._tool_error_loop
 
 
 _LINE_PROCESSORS = {

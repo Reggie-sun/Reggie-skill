@@ -16,7 +16,12 @@ SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from _builder import AgentInvocation  # noqa: E402
-from _executor import _drive_process, _spawn_and_drive, execute_agent  # noqa: E402
+from _executor import (  # noqa: E402
+    _drive_process,
+    _spawn_and_drive,
+    build_final_response,
+    execute_agent,
+)
 
 
 def _python_process(source: str) -> subprocess.Popen:
@@ -40,6 +45,8 @@ def _drive_test_process(
     cli: str = "claude",
     timeout_ms: int = 100,
     semantic_timeout_ms: int | None = None,
+    allowed_commands: tuple[str, ...] = (),
+    fail_fast_tool_errors: bool = True,
 ) -> dict:
     process = _python_process(source)
     try:
@@ -50,6 +57,8 @@ def _drive_test_process(
             heartbeat_sec=0.02,
             progress_stream=progress,
             semantic_timeout_ms=semantic_timeout_ms,
+            allowed_commands=allowed_commands,
+            fail_fast_tool_errors=fail_fast_tool_errors,
         )
     finally:
         if process.poll() is None:
@@ -77,6 +86,27 @@ class ExecutorLivenessTests(unittest.TestCase):
             execute_agent(invocation, timeout_ms=1_800_000)
 
         self.assertEqual(spawn.call_args.kwargs["semantic_timeout_ms"], 1_800_000)
+        self.assertTrue(spawn.call_args.kwargs["fail_fast_tool_errors"])
+
+    def test_read_only_uses_configured_semantic_cap_without_safe_edit_fail_fast(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="inspect",
+            cwd="/tmp",
+            permission="read-only",
+        )
+
+        with (
+            patch(
+                "_executor.build_invocation_args",
+                return_value=("claude", ["-p", "inspect"], None),
+            ),
+            patch("_executor._spawn_and_drive", return_value={"status": "success"}) as spawn,
+        ):
+            execute_agent(invocation, timeout_ms=600_000)
+
+        self.assertFalse(spawn.call_args.kwargs["fail_fast_tool_errors"])
+        self.assertEqual(spawn.call_args.kwargs["semantic_timeout_ms"], 600_000)
 
     def test_activity_extends_idle_timeout_and_emits_progress(self) -> None:
         source = """
@@ -138,7 +168,50 @@ time.sleep(2)
         self.assertEqual(result["exit_code"], 124)
         self.assertIn("stagnation", result["error"].lower())
 
-    def test_repeated_denial_with_new_tool_ids_does_not_extend_stagnation(self) -> None:
+    def test_read_only_distinct_tool_requests_extend_semantic_progress(self) -> None:
+        source = r'''
+import json
+import time
+for index in range(5):
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "id": f"tool-{index}", "input": {"file_path": f"module-{index}.py"}}]}}), flush=True)
+    time.sleep(0.06)
+print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
+'''
+
+        with patch("_executor._MAX_STAGNATION_MS", 100):
+            result = _drive_test_process(
+                source,
+                io.StringIO(),
+                timeout_ms=1_000,
+                fail_fast_tool_errors=False,
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["result"], "DONE")
+
+    def test_read_only_repeated_identical_tool_request_is_not_progress(self) -> None:
+        source = r'''
+import json
+import time
+for index in range(10):
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "id": f"tool-{index}", "input": {"file_path": "same.py"}}]}}), flush=True)
+    time.sleep(0.04)
+time.sleep(2)
+'''
+
+        with patch("_executor._MAX_STAGNATION_MS", 100):
+            result = _drive_test_process(
+                source,
+                io.StringIO(),
+                timeout_ms=1_000,
+                fail_fast_tool_errors=False,
+            )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["exit_code"], 124)
+        self.assertIn("stagnation", result["error"].lower())
+
+    def test_repeated_denial_with_new_tool_ids_fails_fast(self) -> None:
         source = """
 import json
 import time
@@ -164,8 +237,202 @@ time.sleep(2)
         with patch("_executor._MAX_STAGNATION_MS", 100):
             result = _drive_test_process(source, io.StringIO(), timeout_ms=1_000)
 
-        self.assertEqual(result["status"], "partial")
-        self.assertIn("stagnation", result["error"].lower())
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
+
+    def test_repeated_permission_denial_fails_fast_with_grant_mismatch(self) -> None:
+        source = r'''
+import json
+import time
+commands = [
+    "git commit -m 'test: replay proof'",
+    'git commit -m "test: replay proof"',
+    "git commit -m 'test: replay proof'",
+]
+for index, command in enumerate(commands):
+    tool_id = f"tool-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
+    error = f"Permission to use Bash with command {command} has been denied"
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": error}]}}), flush=True)
+    time.sleep(0.02)
+time.sleep(2)
+'''
+        started_at = time.monotonic()
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=2_000,
+            semantic_timeout_ms=2_000,
+            allowed_commands=('git commit -m "test: replay proof"',),
+        )
+
+        self.assertLess(time.monotonic() - started_at, 1.0)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
+        self.assertEqual(result["blocker"]["occurrences"], 3)
+        self.assertEqual(
+            result["blocker"]["grant_match"],
+            "argv_equivalent_exact_string_mismatch",
+        )
+        self.assertIn("git commit", result["blocker"]["attempted_command"])
+        self.assertIn("has been denied", result["blocker"]["tool_error"])
+        self.assertIn("grant mismatch", result["error"].lower())
+
+    def test_successful_reads_do_not_clear_repeated_bash_denials(self) -> None:
+        source = r'''
+import json
+import time
+for index in range(3):
+    bash_id = f"bash-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": bash_id, "input": {"command": "git commit -m 'replay proof'"}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": bash_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
+    read_id = f"read-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "id": read_id, "input": {"file_path": "owned.py"}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": read_id, "content": "contents"}]}}), flush=True)
+    time.sleep(0.02)
+time.sleep(2)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=2_000,
+            semantic_timeout_ms=2_000,
+            allowed_commands=('git commit -m "replay proof"',),
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
+        self.assertEqual(result["blocker"]["occurrences"], 3)
+
+    def test_successful_bash_clears_prior_bash_denial_streak(self) -> None:
+        source = r'''
+import json
+events = [
+    ("bash-1", True, "git status --short"),
+    ("bash-2", False, "git status --short"),
+    ("bash-3", True, "git commit -m 'replay proof'"),
+    ("bash-4", True, "git commit -m 'replay proof'"),
+]
+for tool_id, denied, command in events:
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
+    result = {"type": "tool_result", "tool_use_id": tool_id, "content": "ok"}
+    if denied:
+        result.update({"is_error": True, "content": "Permission to use Bash has been denied"})
+    print(json.dumps({"type": "user", "message": {"content": [result]}}), flush=True)
+print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            semantic_timeout_ms=1_000,
+            allowed_commands=("git status --short",),
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["result"], "DONE")
+
+    def test_successful_different_bash_command_does_not_clear_denied_commit(self) -> None:
+        source = r'''
+import json
+import time
+for index in range(3):
+    commit_id = f"commit-{index}"
+    commit = "git commit -m 'replay proof'"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": commit_id, "input": {"command": commit}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": commit_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
+    status_id = f"status-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": status_id, "input": {"command": "git status --short"}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": status_id, "content": "clean"}]}}), flush=True)
+    time.sleep(0.02)
+time.sleep(2)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=2_000,
+            semantic_timeout_ms=2_000,
+            allowed_commands=("git status --short", 'git commit -m "replay proof"'),
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
+        self.assertEqual(result["blocker"]["occurrences"], 3)
+
+    def test_repeated_equivalent_tool_error_fails_fast(self) -> None:
+        source = r'''
+import json
+import time
+for index in range(3):
+    tool_id = f"tool-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit", "id": tool_id, "input": {"file_path": "owned.py"}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "Target changed since it was read"}]}}), flush=True)
+    time.sleep(0.02)
+time.sleep(2)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=2_000,
+            semantic_timeout_ms=2_000,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "repeated_tool_error")
+        self.assertEqual(result["blocker"]["occurrences"], 3)
+
+    def test_exact_grant_denial_is_not_misreported_as_quoting_mismatch(self) -> None:
+        source = r'''
+import json
+for index in range(3):
+    tool_id = f"tool-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": "git status --short"}}]}}), flush=True)
+    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            semantic_timeout_ms=1_000,
+            allowed_commands=("git status --short",),
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["blocker"]["grant_match"], "exact_grant_present")
+        self.assertIn("exact granted command", result["error"])
+        self.assertNotIn("grant mismatch", result["error"])
+
+    def test_single_tool_error_is_not_misclassified_as_loop(self) -> None:
+        source = r'''
+import json
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit", "id": "tool-1", "input": {"file_path": "owned.py"}}]}}), flush=True)
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1", "is_error": True, "content": "Target changed since it was read"}]}}), flush=True)
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "id": "tool-2", "input": {"file_path": "owned.py"}}]}}), flush=True)
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-2", "content": "fresh contents"}]}}), flush=True)
+print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            semantic_timeout_ms=1_000,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["result"], "DONE")
+        self.assertNotIn("blocker", result)
 
     def test_transport_timeout_does_not_shorten_stagnation_deadline(self) -> None:
         source = """
@@ -258,6 +525,109 @@ print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["result"], "DONE")
+
+    def test_abnormal_cli_signal_cannot_report_transport_success(self) -> None:
+        result = build_final_response(
+            "minimax",
+            143,
+            {"type": "result", "status": "success", "result": "DONE"},
+            [],
+            "",
+            terminated_by_us=False,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["transport_exit_code"], 1)
+        self.assertEqual(result["exit_code"], 143)
+        self.assertEqual(result["cli_exit_code"], 143)
+        self.assertEqual(result["termination_reason"], "cli_signal")
+
+    def test_zero_cli_exit_without_terminal_result_is_not_reported_as_cli_exit_one(
+        self,
+    ) -> None:
+        result = build_final_response(
+            "minimax",
+            0,
+            None,
+            ["unparseable provider output\n"],
+            "",
+            terminated_by_us=False,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["transport_exit_code"], 1)
+        self.assertEqual(result["exit_code"], 1)
+        self.assertEqual(result["cli_exit_code"], 0)
+        self.assertEqual(result["termination_reason"], "missing_terminal_result")
+        self.assertEqual(
+            result["error"],
+            "CLI exited with code 0 without a usable terminal result",
+        )
+
+    def test_claude_success_subtype_with_zero_exit_is_transport_success(self) -> None:
+        report = (
+            "Read-only findings.\n"
+            '<subagent_result>{"status":"DONE_WITH_CONCERNS",'
+            '"summary":"Mapped the lifecycle","questions":[],"state_file":null,'
+            '"concerns":["Parent verification required"]}</subagent_result>'
+        )
+        result = build_final_response(
+            "minimax",
+            0,
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": report,
+            },
+            [],
+            "",
+            terminated_by_us=False,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["transport_exit_code"], 0)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["cli_exit_code"], 0)
+        self.assertEqual(result["termination_reason"], "cli_exit")
+        self.assertEqual(result["result"], report)
+
+    def test_terminal_event_followed_by_cli_exit_143_is_not_runner_success(self) -> None:
+        source = r'''
+import json
+import os
+print(json.dumps({"type": "result", "status": "success", "result": "DONE"}), flush=True)
+os._exit(143)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            semantic_timeout_ms=1_000,
+        )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["transport_exit_code"], 1)
+        self.assertEqual(result["exit_code"], 143)
+        self.assertEqual(result["cli_exit_code"], 143)
+        self.assertEqual(result["termination_reason"], "cli_signal")
+
+    def test_runner_terminal_signal_is_explicit_and_normalized(self) -> None:
+        result = build_final_response(
+            "minimax",
+            -signal.SIGTERM,
+            {"type": "result", "status": "success", "result": "DONE"},
+            [],
+            "",
+            terminated_by_us=True,
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["transport_exit_code"], 0)
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["cli_exit_code"], -signal.SIGTERM)
+        self.assertEqual(result["termination_reason"], "terminal_event")
 
     def test_timeout_kills_the_entire_process_group(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
