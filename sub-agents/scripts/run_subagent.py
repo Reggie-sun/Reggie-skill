@@ -18,7 +18,11 @@ from _dialogue import (  # noqa: E402
     normalize_dialogue_result,
 )
 from _executor import execute_agent  # noqa: E402
-from _loader import get_agents_dir, list_agents, load_agent  # noqa: E402
+from _loader import (  # noqa: E402
+    discover_agents,
+    load_agent,
+    resolve_agent_reference,
+)
 from _resolver import resolve_cli  # noqa: E402
 
 
@@ -98,9 +102,14 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.list:
-        agents_dir = get_agents_dir(args.agents_dir, args.cwd)
-        agents = list_agents(agents_dir)
-        print(json.dumps({"agents": agents, "agents_dir": agents_dir}, ensure_ascii=False))
+        agents, agents_dir, fallback_dir = discover_agents(
+            args.agents_dir,
+            args.cwd,
+        )
+        payload = {"agents": agents, "agents_dir": agents_dir}
+        if fallback_dir is not None:
+            payload["fallback_agents_dir"] = fallback_dir
+        print(json.dumps(payload, ensure_ascii=False))
         sys.exit(0)
 
     if not args.agent:
@@ -119,9 +128,12 @@ def main() -> None:
         _print_error(f"Invalid --cwd {args.cwd!r}: directory does not exist.")
         sys.exit(1)
 
-    agents_dir = get_agents_dir(args.agents_dir, args.cwd)
-
     try:
+        agents_dir, agent_name = resolve_agent_reference(
+            args.agent,
+            args.agents_dir,
+            args.cwd,
+        )
         (
             run_agent_cli,
             system_context,
@@ -131,7 +143,7 @@ def main() -> None:
             model,
             effort,
             agent_timeout_ms,
-        ) = load_agent(agents_dir, args.agent)
+        ) = load_agent(agents_dir, agent_name)
     except (FileNotFoundError, ValueError) as e:
         _print_error(str(e))
         sys.exit(1)

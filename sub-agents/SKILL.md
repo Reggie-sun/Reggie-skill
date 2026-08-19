@@ -23,7 +23,7 @@ Extract parameters from user's natural language request:
 
 | Parameter | Source |
 |-----------|--------|
-| `--agent` | Agent name from the user request or workflow selection |
+| `--agent` | Agent name, or an explicit `.md`/`.txt` definition path; never pass a directory |
 | `--prompt` | Task instruction part (excluding agent specification) |
 | `--cwd` | Current working directory (absolute path) |
 | `--cli` | Backend override explicitly requested by the user; otherwise omit |
@@ -78,9 +78,10 @@ This script executes external CLIs that require elevated permissions.
 python3 {SKILL_DIR}/scripts/run_subagent.py --list
 ```
 
-Output:
+Output (project definitions win by name; host definitions are merged when no
+explicit `--agents-dir` or `SUB_AGENTS_DIR` is selected):
 ```json
-{"agents": [{"name": "code-reviewer", "description": "Reviews code..."}], "agents_dir": "/path/.agents"}
+{"agents": [{"name": "writer", "description": "Bounded writer..."}], "agents_dir": "/project/.agents", "fallback_agents_dir": "/home/user/.agents"}
 ```
 
 When the user provides an agent name, select it if it appears in the result. If
@@ -130,6 +131,12 @@ python3 {SKILL_DIR}/scripts/run_subagent.py \
 
 Append `--cli <backend>` when the user specifies a backend. Append
 `--timeout <milliseconds>` when the user specifies a timeout.
+`--agent writer` first resolves `<cwd>/.agents/writer.md`, then automatically
+falls back to `~/.agents/writer.md` when no explicit definition directory was
+selected. An explicit definition file is also accepted directly, for example
+`--agent /home/user/.agents/writer.md`; the runner safely derives the containing
+directory and definition name. Do not combine a definition path with
+`--agents-dir`.
 For a Claude-family `safe-edit` agent, append one `--allow-command <exact command>`
 per authorized test or Git command. The runner exposes no Bash tool when this
 list is empty, and rejects every Bash command not listed exactly.
@@ -235,8 +242,11 @@ configuration has changed.
 
 | Priority | Source | Path |
 |----------|--------|------|
-| 1 | Environment variable | `$SUB_AGENTS_DIR` |
-| 2 | Default | `{cwd}/.agents/` |
+| 1 | Explicit definition file | `--agent /path/to/<name>.md` |
+| 2 | CLI directory | `--agents-dir /path/to/.agents` |
+| 3 | Environment variable | `$SUB_AGENTS_DIR` |
+| 4 | Project | `{cwd}/.agents/` |
+| 5 | Host fallback | `$SUB_AGENTS_HOST_DIR` or `~/.agents/` |
 
 To customize: `export SUB_AGENTS_DIR=/custom/path`
 

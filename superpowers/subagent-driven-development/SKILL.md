@@ -194,13 +194,15 @@ Use the native named `reviewer` profile for every review gate:
 
 1. Read `/home/reggie/.codex/skills/sub-agents/SKILL.md` and its Codex
    reference before the first dispatch.
-2. Resolve `explorer` and `writer` independently. List definitions against the active
-   workspace with `run_subagent.py --list --cwd <workspace>`; a matching
-   `<workspace>/.agents/<role>.md` wins for that role.
-3. For each missing role, list and dispatch it with the explicit host fallback
-   `--agents-dir /home/reggie/.agents`. The runner does not infer this
-   fallback. In a mixed setup, project and host roles therefore use separate
-   invocations rather than one directory replacing the other.
+2. Resolve `explorer` and `writer` independently. List effective definitions
+   with `run_subagent.py --list --cwd <workspace>`; a matching
+   `<workspace>/.agents/<role>.md` wins for that role and missing roles are
+   merged from the host fallback.
+3. Dispatch a resolved role by definition name, for example `--agent writer`.
+   The runner automatically falls back to `/home/reggie/.agents` when the
+   project has no matching definition. It also accepts an explicit definition
+   file path for compatibility, but never pass a directory as `--agent` and do
+   not combine a definition path with `--agents-dir`.
 4. Inspect the selected definitions before dispatch. `explorer` must be
    `permission: read-only`; `writer` must permit the assigned edit and remain
    bounded to explicit ownership. Treat a role that violates these constraints

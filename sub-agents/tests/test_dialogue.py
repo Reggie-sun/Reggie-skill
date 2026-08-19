@@ -426,6 +426,65 @@ Bounded writer.
         self.assertEqual(exited.exception.code, 1)
         self.assertIn("requires --dialogue", stdout.getvalue())
 
+    def test_safe_edit_grant_blocker_is_not_reclassified_as_protocol_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agents_dir = Path(temp_dir) / "agents"
+            agents_dir.mkdir()
+            (agents_dir / "writer.md").write_text(
+                """---
+run-agent: minimax
+permission: safe-edit
+---
+
+# Writer
+""",
+                encoding="utf-8",
+            )
+            argv = [
+                "run_subagent.py",
+                "--agent",
+                "writer",
+                "--agents-dir",
+                str(agents_dir),
+                "--cwd",
+                temp_dir,
+                "--prompt",
+                "Implement the task",
+                "--allow-path",
+                "owned.py",
+                "--dialogue",
+            ]
+            blocked = {
+                "result": "",
+                "exit_code": 1,
+                "transport_exit_code": 1,
+                "cli_exit_code": -15,
+                "status": "error",
+                "termination_reason": "permission_denial_loop",
+                "agent_status": "BLOCKED",
+                "blocker": {
+                    "kind": "permission_denial_loop",
+                    "grant_match": "exact_grant_present",
+                },
+                "error": "The exact granted command was denied by CLI policy.",
+                "cli": "minimax",
+            }
+            stdout = StringIO()
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch("run_subagent.resolve_cli", return_value="minimax"),
+                patch("run_subagent.execute_agent", return_value=blocked),
+                redirect_stdout(stdout),
+                self.assertRaises(SystemExit) as exited,
+            ):
+                main()
+
+        payload = __import__("json").loads(stdout.getvalue())
+        self.assertEqual(exited.exception.code, 1)
+        self.assertEqual(payload["agent_status"], "BLOCKED")
+        self.assertNotEqual(payload["agent_status"], "PROTOCOL_ERROR")
+
 
 if __name__ == "__main__":
     unittest.main()

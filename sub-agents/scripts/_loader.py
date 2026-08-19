@@ -154,3 +154,79 @@ def get_agents_dir(args_agents_dir: str | None, args_cwd: str | None) -> str:
         return str(Path(args_cwd) / ".agents")
 
     return str(Path.cwd() / ".agents")
+
+
+def _definition_exists(agents_dir: str, agent_name: str) -> bool:
+    agents_path = Path(agents_dir)
+    return any(
+        (agents_path / f"{agent_name}{extension}").is_file()
+        for extension in (".md", ".txt")
+    )
+
+
+def _host_agents_dir(override: str | None = None) -> str:
+    return (
+        override
+        or os.environ.get("SUB_AGENTS_HOST_DIR")
+        or str(Path.home() / ".agents")
+    )
+
+
+def discover_agents(
+    args_agents_dir: str | None,
+    args_cwd: str | None,
+    host_agents_dir: str | None = None,
+) -> tuple[list[dict], str, str | None]:
+    """List effective project and host definitions with project precedence."""
+    selected_dir = get_agents_dir(args_agents_dir, args_cwd)
+    selected = list_agents(selected_dir)
+    if args_agents_dir is not None or os.environ.get("SUB_AGENTS_DIR"):
+        return selected, selected_dir, None
+
+    fallback_dir = _host_agents_dir(host_agents_dir)
+    if Path(fallback_dir).resolve() == Path(selected_dir).resolve():
+        return selected, selected_dir, None
+
+    by_name = {agent["name"]: agent for agent in list_agents(fallback_dir)}
+    by_name.update({agent["name"]: agent for agent in selected})
+    return sorted(by_name.values(), key=lambda agent: agent["name"]), selected_dir, fallback_dir
+
+
+def resolve_agent_reference(
+    agent_reference: str,
+    args_agents_dir: str | None,
+    args_cwd: str | None,
+    host_agents_dir: str | None = None,
+) -> tuple[str, str]:
+    """Resolve an agent name or explicit definition file without weakening precedence."""
+    supplied = Path(agent_reference)
+    is_path_reference = supplied.is_absolute() or "/" in agent_reference
+
+    if is_path_reference:
+        if args_agents_dir:
+            raise ValueError(
+                "Use either an agent definition path or --agents-dir, not both."
+            )
+        candidate = supplied if supplied.is_absolute() else Path(args_cwd or Path.cwd()) / supplied
+        if candidate.suffix not in {".md", ".txt"} or not candidate.is_file():
+            raise ValueError(
+                f"Agent definition path {agent_reference!r} must name an existing .md or .txt file."
+            )
+        return str(candidate.parent.resolve()), candidate.stem
+
+    validate_agent_name(agent_reference)
+    selected_dir = get_agents_dir(args_agents_dir, args_cwd)
+    if _definition_exists(selected_dir, agent_reference):
+        return selected_dir, agent_reference
+
+    explicit_selection = args_agents_dir is not None or bool(
+        os.environ.get("SUB_AGENTS_DIR")
+    )
+    if explicit_selection:
+        return selected_dir, agent_reference
+
+    fallback_dir = _host_agents_dir(host_agents_dir)
+    if _definition_exists(fallback_dir, agent_reference):
+        return fallback_dir, agent_reference
+
+    return selected_dir, agent_reference
