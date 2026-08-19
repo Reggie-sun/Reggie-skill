@@ -9,14 +9,10 @@ from _constants import SUPPORTED_CLIS_HELP
 
 
 _TOOL_ERROR_LOOP_THRESHOLD = 3
-_PERMISSION_DENIAL_MARKERS = (
-    "permission denied",
-    "permission rule",
+_POLICY_PERMISSION_DENIAL_MARKERS = (
     "not in allowedtools",
-    "not allowed",
-    "requires permission",
     "tool use was denied",
-    "has been denied",
+    "because claude code is running in don't ask mode",
 )
 _DIALOGUE_ENVELOPE_AT_END = re.compile(
     r"<subagent_result>.*</subagent_result>\s*\Z",
@@ -42,6 +38,20 @@ def _tool_result_text(content: object) -> str:
 
 def _error_signature(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _is_policy_permission_denial(signature: str, tool_name: str | None) -> bool:
+    if any(marker in signature for marker in _POLICY_PERMISSION_DENIAL_MARKERS):
+        return True
+    if not tool_name:
+        return False
+    tool = re.escape(tool_name.casefold())
+    return bool(
+        re.search(
+            rf"\bpermission to use {tool}\b.*\bhas been denied\b",
+            signature,
+        )
+    )
 
 
 def _command_family(command: str | None) -> tuple[str, ...] | None:
@@ -191,9 +201,7 @@ class StreamProcessor:
         if attempted_command is None and tool_name == "Bash":
             attempted_command = self._last_tool_command
         command_family = _command_family(attempted_command)
-        is_permission_denial = any(
-            marker in signature for marker in _PERMISSION_DENIAL_MARKERS
-        )
+        is_permission_denial = _is_policy_permission_denial(signature, tool_name)
         if is_permission_denial:
             if tool_name == self._permission_denial_tool:
                 self._permission_denial_count += 1
@@ -212,7 +220,10 @@ class StreamProcessor:
             self._equivalent_error_count = 1
         self._last_error_command_family = command_family
 
-        if self._permission_denial_count >= _TOOL_ERROR_LOOP_THRESHOLD:
+        # A fresh, non-interactive invocation cannot change its tool grants.
+        # Continuing after any permission denial only invites the model to
+        # retry or rephrase a command that can never become authorized.
+        if is_permission_denial:
             self._tool_error_loop = {
                 "kind": "permission_denial_loop",
                 "occurrences": self._permission_denial_count,

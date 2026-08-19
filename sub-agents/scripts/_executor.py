@@ -224,18 +224,21 @@ def _tool_error_loop_payload(
             "command_not_authorized",
         }:
             detail = (
-                f"Permission denial loop after {blocker['occurrences']} failures; "
-                f"command grant mismatch for {attempted!r} ({grant_match})."
+                "Permission denied; the invocation stopped immediately because "
+                f"tool grants cannot change. Command grant mismatch for "
+                f"{attempted!r} ({grant_match})."
             )
         elif blocker.get("tool") == "Bash" and grant_match == "exact_grant_present":
             detail = (
-                f"Permission denial loop after {blocker['occurrences']} failures; "
-                f"the exact granted command {attempted!r} was denied by the CLI tool policy."
+                "Permission denied; the invocation stopped immediately because "
+                f"tool grants cannot change. The exact granted command {attempted!r} "
+                "was denied by the CLI tool policy."
             )
         else:
             detail = (
-                f"Permission denial loop after {blocker['occurrences']} failures "
-                f"for tool {blocker.get('tool') or '<unknown>'}."
+                "Permission denied; the invocation stopped immediately because "
+                "tool grants cannot change for tool "
+                f"{blocker.get('tool') or '<unknown>'}."
             )
     else:
         detail = (
@@ -321,7 +324,7 @@ def _drive_process(
     process: subprocess.Popen,
     cli: str,
     timeout_ms: int,
-    heartbeat_sec: float = 30.0,
+    heartbeat_sec: float = 60.0,
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
     semantic_timeout_ms: int | None = None,
@@ -502,7 +505,7 @@ def _spawn_and_drive(
     cwd: str,
     cli: str,
     timeout_ms: int,
-    heartbeat_sec: float = 30.0,
+    heartbeat_sec: float = 60.0,
     progress_stream=None,
     max_stdout_chars: int = _MAX_STDOUT_CHARS,
     semantic_timeout_ms: int | None = None,

@@ -22,12 +22,12 @@ fail-then-retry path, including:
   new tool ID does not. Repeated identical heartbeats or tool results also do
   not count. Safe-edit uses the same resolved timeout for this cap so
   legitimate long-running tools are not killed by a shorter fixed threshold.
-- Safe-edit separately stops after three repeated same-tool permission denials
-  or three equivalent tool errors. Failed tool results and re-quoted retries do
-  not refresh semantic progress. A single ordinary tool error does not trigger
-  this guard, and an in-flight long-running test is not a denial loop. Success
-  from an unrelated tool or Bash argv family does not clear the denied family;
-  successful execution of that same family does.
+- Safe-edit stops on the first permission denial because grants cannot change
+  inside a fresh non-interactive invocation. Three equivalent non-permission
+  tool errors still trigger the repeated-error guard. Failed tool results and
+  re-quoted retries do not refresh semantic progress. A single ordinary tool
+  error does not trigger this guard, and an in-flight long-running test is not
+  a denial loop.
 - Omit it to use the agent definition's `timeout`; otherwise the global default is `600000ms`.
 - The global `writer` on this host uses `1800000ms` with high-effort implementation.
 - Set the surrounding tool timeout high enough for the complete task; heartbeat output keeps the attached run observable.

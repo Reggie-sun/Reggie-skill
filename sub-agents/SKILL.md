@@ -46,6 +46,14 @@ context or when reloading that context costs more than the edit. Prefer an
 external writer for a bounded implementation unit with clear file ownership
 and enough independent work to justify a fresh context.
 
+Dispatch a writer only when the implementation unit is ready: required runtime
+identities, profiles, fixtures, and accepted contracts exist; one established
+local pattern is named; owned paths are complete; and an exact focused
+verification command is known. An explorer finding an unresolved capability,
+missing sealed workflow/profile, or architecture decision is a stop signal for
+implementation, not an invitation to let the writer guess. Resolve the gate or
+keep the task in design/exploration.
+
 This skill implements external delegation; it does not decide whether a task
 must be delegated. When a higher-priority rule routes a bounded writer through
 this skill, use the host `writer` definition and its configured external
@@ -145,6 +153,9 @@ list is empty, and rejects every Bash command not listed exactly.
 Each grant must have valid shell quoting. The runner also parses it into argv
 for diagnostics, but argv equivalence never authorizes a differently quoted
 shell string. Copy the displayed exact grant rather than reconstructing it.
+Treat the grant list as the complete shell plan. Do not ask the agent to inspect
+Git unless the exact Git command is granted; `Read`/`Grep` cover ordinary file
+self-review without a pipe, `head`, `tail`, `&&`, or invented test selector.
 Append one `--allow-path <relative path>` per owned file or directory pattern;
 at least one is required for `safe-edit`, and edits outside those paths are
 denied non-interactively.
@@ -226,13 +237,15 @@ means that the task completed:
 | `BLOCKED` | Assess the blocker; do not repeat the unchanged dispatch |
 | `PROTOCOL_ERROR` | Correct the prompt/protocol once; do not infer completion from prose |
 
-For `safe-edit`, three repeated same-tool permission denials or three equivalent
-tool errors terminate the child and return `status=error`, `agent_status=BLOCKED`,
-and a structured `blocker`. It includes the attempted command, exact grants,
-argv-equivalence diagnosis, and tool error. Do not repeat the unchanged
-dispatch; fix the grant or keep verification/commit in the parent. Successful
-unrelated tools or Bash commands do not clear a denied command family; a
-successful execution of that same Bash argv family does.
+For `safe-edit`, the first permission denial terminates the child because a
+fresh non-interactive invocation cannot change its grants. Three equivalent
+non-permission tool errors still trigger the repeated-error guard. The runner
+returns `status=error`, `agent_status=BLOCKED`, and a structured `blocker` with
+the attempted command, exact grants, argv-equivalence diagnosis, and tool
+error. Inspect task-owned artifacts before deciding on a retry: if the assigned
+deliverables and evidence are already complete, verify/adopt them without
+paying for another fresh context; retry only when an authorized grant change is
+required to finish a missing deliverable.
 
 Dialogue is bounded turn-taking, not an interactive subprocess. The runner
 uses `stdin=DEVNULL` and no session persistence. Parent answer files must be
@@ -317,7 +330,10 @@ new tool IDs or repeated failure events as semantic progress. For read-only
 Claude-family agents, a distinct tool request or successful tool result is
 semantic progress; the same request repeated with only a new tool ID is not.
 This keeps active exploration alive without letting identical heartbeats evade
-the resolved agent timeout. Use repeated flags for explicit ownership, focused tests,
+the resolved agent timeout. Runtime progress heartbeats are intentionally no
+more frequent than once per minute; poll an attached process at roughly that
+cadence and do not echo unchanged heartbeat-only output into the parent
+context. Use repeated flags for explicit ownership, focused tests,
 and task-only Git commands the parent has authorized. Do not use `yolo` as a
 workaround for a missing path or command grant.
 

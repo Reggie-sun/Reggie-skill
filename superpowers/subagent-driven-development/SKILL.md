@@ -242,6 +242,14 @@ The flag validates dispatch inputs and injects the strict contract; it is not a
 mechanical proof of provider tool ordering. The parent must inspect the report,
 diff, and executable evidence before accepting `DONE`.
 
+Before paying the fresh-context cost, record an implementation-readiness gate:
+the accepted contract and unchanged behavior, one concrete repository pattern,
+all required runtime identities/profiles/fixtures, exact owned paths, and the
+focused verification command. Every required item must be resolved. If the
+explorer reports a missing sealed workflow/profile, unresolved capability, or
+architecture choice, do not dispatch a writer to discover or invent the
+answer. Resolve the gate in the parent/design lane first.
+
 If a TDD writer edits production before credible RED, or a failed invocation
 leaves production edits without RED evidence, do not preserve that draft as a
 valid starting point for a TDD retry. Inspect the task-owned diff, record the
@@ -280,15 +288,18 @@ successful transport response. A material unresolved decision requires
 changes as potentially invalid and do not silently adopt them.
 
 Do not switch away from MiniMax merely because one invocation times out,
-requests an ungranted command, or returns an incomplete report. Diagnose the
-terminal result, narrow the task or add the exact missing command when it is
-authorized, and make one bounded fresh retry with the full artifact-backed
-context. Fall back to a native explorer or writer only after that retry ends
-in a genuine runner/backend failure, a higher-authority rule conflicts, or
-the task requires a capability the external definition cannot provide. State
-the exact fallback reason. Native review is the designed review lane, not a
-fallback. The controller remains responsible for the final diff,
-verification evidence, and all lifecycle rulings regardless of backend.
+requests an ungranted command, or returns an incomplete report. First inspect
+the task-owned diff/report and run the already authorized focused verification
+from the parent. If deliverables are complete and adoptable, continue without a
+retry. If an essential deliverable is missing, diagnose the terminal result,
+narrow the task or add the exact missing command when authorized, and make one
+bounded fresh retry with the full artifact-backed context. Fall back to a
+native explorer or writer only after that retry ends in a genuine
+runner/backend failure, a higher-authority rule conflicts, or the task requires
+a capability the external definition cannot provide. State the exact fallback
+reason. Native review is the designed review lane, not a fallback. The
+controller remains responsible for the final diff, verification evidence, and
+all lifecycle rulings regardless of backend.
 
 ## Model Selection
 
@@ -361,6 +372,11 @@ line of status and reconcile your live children: list them, and chase
 any that finished without reporting. A bounded stretch keeps nearly
 all of a long wait's efficiency while guaranteeing a stuck or lost
 child is noticed within minutes, not at the end of the session.
+
+For an attached external `run_subagent.py` process, use its one-minute progress
+heartbeat as the polling cadence. Do not issue 30-second heartbeat-only polls
+or narrate unchanged `tool_result` heartbeats; report only semantic progress,
+a health concern, or the terminal result.
 
 ### 1. Dispatch the implementer
 
@@ -644,6 +660,7 @@ and report the verified result without a branch-finishing ceremony.
 | "Reviews slow the loop down" | The loop without reviews is just unverified churn. Reviews are the loop's brakes and steering. |
 | "Ledger bookkeeping is overhead" | The ledger is what survives compaction. Controllers without one have re-dispatched entire completed task sequences. |
 | "The implementer spawned its own reviewer — free extra assurance" | It's a duplicate seat reviewing the same diff; the task review is the gate. A worker-spawned reviewer is a defect to flag, not rigor. |
+| "The writer can discover the missing runtime profile while implementing" | Missing sealed identities, fixtures, profiles, or architecture choices fail the readiness gate. Resolve them before paying for a writer context. |
 
 ## Example Workflow
 

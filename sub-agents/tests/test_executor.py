@@ -260,15 +260,17 @@ time.sleep(2)
 import json
 import time
 for index in range(10):
+    tool_id = f"tool-{index}"
+    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": "git status --short"}}]}}), flush=True)
     event = {
         "type": "user",
         "message": {
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": f"tool-{index}",
+                    "tool_use_id": tool_id,
                     "is_error": True,
-                    "content": "Permission denied",
+                    "content": "Permission to use Bash has been denied",
                 }
             ]
         },
@@ -285,21 +287,115 @@ time.sleep(2)
         self.assertEqual(result["agent_status"], "BLOCKED")
         self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
 
-    def test_repeated_permission_denial_fails_fast_with_grant_mismatch(self) -> None:
+    def test_first_permission_denial_is_terminal_because_grants_cannot_change(self) -> None:
         source = r'''
 import json
 import time
-commands = [
-    "git commit -m 'test: replay proof'",
-    'git commit -m "test: replay proof"',
-    "git commit -m 'test: replay proof'",
-]
-for index, command in enumerate(commands):
-    tool_id = f"tool-{index}"
-    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
-    error = f"Permission to use Bash with command {command} has been denied"
-    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": error}]}}), flush=True)
-    time.sleep(0.02)
+tool_id = "bash-1"
+command = "git status --short && head -20 owned.py"
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
+time.sleep(2)
+'''
+        started_at = time.monotonic()
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=2_000,
+            semantic_timeout_ms=2_000,
+            allowed_commands=("git status --short",),
+        )
+
+        self.assertLess(time.monotonic() - started_at, 1.0)
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
+        self.assertEqual(result["blocker"]["occurrences"], 1)
+        self.assertEqual(result["blocker"]["grant_match"], "command_not_authorized")
+
+    def test_os_permission_error_from_granted_command_is_not_a_grant_denial(self) -> None:
+        source = r'''
+import json
+tool_id = "bash-1"
+command = "pytest -q tests/test_widget.py"
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "OSError: [Errno 13] Permission denied: /tmp/test-artifact"}]}}), flush=True)
+print(json.dumps({"type": "result", "result": "diagnosed and fixed"}), flush=True)
+'''
+
+        result = _drive_test_process(
+            source,
+            io.StringIO(),
+            timeout_ms=1_000,
+            semantic_timeout_ms=1_000,
+            allowed_commands=("pytest -q tests/test_widget.py",),
+        )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["result"], "diagnosed and fixed")
+
+    def test_application_permission_errors_are_not_grant_denials(self) -> None:
+        errors = (
+            "HTTP 403: this API operation requires permission admin.read",
+            "You need permission to use /dev/video0",
+        )
+        for index, error in enumerate(errors):
+            with self.subTest(error=error):
+                tool_id = f"bash-{index}"
+                command = "pytest -q tests/test_widget.py"
+                source = _event_source(
+                    [
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_use",
+                                        "name": "Bash",
+                                        "id": tool_id,
+                                        "input": {"command": command},
+                                    }
+                                ]
+                            },
+                        },
+                        {
+                            "type": "user",
+                            "message": {
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": tool_id,
+                                        "is_error": True,
+                                        "content": error,
+                                    }
+                                ]
+                            },
+                        },
+                        {"type": "result", "result": "diagnosed and fixed"},
+                    ]
+                )
+
+                result = _drive_test_process(
+                    source,
+                    io.StringIO(),
+                    timeout_ms=1_000,
+                    semantic_timeout_ms=1_000,
+                    allowed_commands=(command,),
+                )
+
+                self.assertEqual(result["status"], "success")
+                self.assertEqual(result["result"], "diagnosed and fixed")
+
+    def test_first_permission_denial_reports_grant_mismatch(self) -> None:
+        source = r'''
+import json
+import time
+command = "git commit -m 'test: replay proof'"
+tool_id = "tool-0"
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": command}}]}}), flush=True)
+error = f"Permission to use Bash with command {command} has been denied"
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": error}]}}), flush=True)
 time.sleep(2)
 '''
         started_at = time.monotonic()
@@ -316,7 +412,7 @@ time.sleep(2)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["agent_status"], "BLOCKED")
         self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
-        self.assertEqual(result["blocker"]["occurrences"], 3)
+        self.assertEqual(result["blocker"]["occurrences"], 1)
         self.assertEqual(
             result["blocker"]["grant_match"],
             "argv_equivalent_exact_string_mismatch",
@@ -351,9 +447,9 @@ time.sleep(2)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["agent_status"], "BLOCKED")
         self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
-        self.assertEqual(result["blocker"]["occurrences"], 3)
+        self.assertEqual(result["blocker"]["occurrences"], 1)
 
-    def test_successful_bash_clears_prior_bash_denial_streak(self) -> None:
+    def test_later_success_cannot_rescue_a_permission_denial(self) -> None:
         source = r'''
 import json
 events = [
@@ -379,8 +475,9 @@ print(json.dumps({"type": "result", "result": "DONE"}), flush=True)
             allowed_commands=("git status --short",),
         )
 
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(result["result"], "DONE")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["blocker"]["occurrences"], 1)
 
     def test_successful_different_bash_command_does_not_clear_denied_commit(self) -> None:
         source = r'''
@@ -409,7 +506,7 @@ time.sleep(2)
         self.assertEqual(result["status"], "error")
         self.assertEqual(result["agent_status"], "BLOCKED")
         self.assertEqual(result["blocker"]["kind"], "permission_denial_loop")
-        self.assertEqual(result["blocker"]["occurrences"], 3)
+        self.assertEqual(result["blocker"]["occurrences"], 1)
 
     def test_repeated_equivalent_tool_error_fails_fast(self) -> None:
         source = r'''
@@ -438,10 +535,9 @@ time.sleep(2)
     def test_exact_grant_denial_is_not_misreported_as_quoting_mismatch(self) -> None:
         source = r'''
 import json
-for index in range(3):
-    tool_id = f"tool-{index}"
-    print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": "git status --short"}}]}}), flush=True)
-    print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
+tool_id = "tool-0"
+print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "id": tool_id, "input": {"command": "git status --short"}}]}}), flush=True)
+print(json.dumps({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": tool_id, "is_error": True, "content": "Permission to use Bash has been denied"}]}}), flush=True)
 '''
 
         result = _drive_test_process(
@@ -453,6 +549,7 @@ for index in range(3):
         )
 
         self.assertEqual(result["status"], "error")
+        self.assertEqual(result["blocker"]["occurrences"], 1)
         self.assertEqual(result["blocker"]["grant_match"], "exact_grant_present")
         self.assertIn("exact granted command", result["error"])
         self.assertNotIn("grant mismatch", result["error"])

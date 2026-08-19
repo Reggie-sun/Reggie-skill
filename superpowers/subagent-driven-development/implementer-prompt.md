@@ -61,9 +61,11 @@ Subagent (general-purpose):
     `git commit --only ... -- [OWNED_PATHS]` command so unrelated pre-staged
     changes cannot enter your commit.
 
-    Authorized shell commands: [EXACT_COMMANDS]. Run only these exact commands.
-    If another command is required, return NEEDS_CONTEXT with the exact command
-    and reason; do not substitute, wrap, or bypass the command boundary.
+    Authorized shell commands: [EXACT_COMMANDS]. This list is the complete shell
+    plan. Invoke only one listed string verbatim. Use Read/Grep for ordinary
+    inspection; never append a pipe, head/tail, `&&`, wrapper, or narrower test
+    selector. If another command is required, return NEEDS_CONTEXT before
+    requesting it, with the exact command and reason.
 
     **While you work:** If you encounter something unexpected or unclear, **ask questions**.
     It's always OK to pause and clarify. Don't guess or make assumptions.
