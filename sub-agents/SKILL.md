@@ -14,8 +14,20 @@ Workflow: discover available definitions, select one from the user request, exec
 
 - **[run_subagent.py](scripts/run_subagent.py)** - Main execution script
 - **[codex.md](references/codex.md)** - Read before first execution from Codex; covers permissions and timeout
+- **[minimax-writer-session-diagnostics.md](references/minimax-writer-session-diagnostics.md)** - Read when MiniMax dispatch repeatedly blocks, retries without progress, invents shell commands, or produces useful edits without a clean terminal result
 
 **Script Path**: Invoke `python3 {SKILL_DIR}/scripts/run_subagent.py` using the absolute skill path, where `{SKILL_DIR}` is the directory containing this SKILL.md file. Using the interpreter explicitly remains reliable if an installer fails to preserve the executable bit.
+
+## Maintenance Verification
+
+After every change to this skill's runtime, agent definitions, prompts, or
+reference documentation, run the relevant local checks and then one real paid
+MiniMax invocation before deployment. Match the live smoke to the change: use
+a read-only retrieval/application scenario for documentation, and a bounded
+fixture with explicit paths and commands for runner or writer behavior. Do not
+substitute fake/unit tests for this live gate, expose credentials in the prompt,
+or use unrelated project work as proof. Record the terminal transport fields,
+`agent_status`, files actually read or changed, and remaining concerns.
 
 ## Interpreting User Requests
 
