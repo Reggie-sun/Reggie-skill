@@ -9,6 +9,7 @@ import threading
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "capture_session.py"
@@ -81,6 +82,91 @@ def _write_rollout(path: Path, session_id: str) -> None:
 
 
 class CaptureSessionTests(unittest.TestCase):
+    def test_report_surfaces_activity_and_evidence_optimization_signals(self) -> None:
+        capture = MODULE.Capture(
+            session_id="session-12345678",
+            source_path=Path("rollout.jsonl"),
+            invocations=[MODULE.Invocation("t0", agent="explorer", dialogue=True)],
+            terminals=[
+                MODULE.Terminal(
+                    "t1",
+                    "success",
+                    "0",
+                    "0",
+                    "cli_exit",
+                    "DONE_WITH_CONCERNS",
+                    0,
+                    2,
+                    "none",
+                    "none",
+                )
+            ],
+        )
+        elapsed = 0
+        events = ["tool:Bash", "tool_result:error"]
+        events.extend(["tool:Read"] * 17)
+        events.extend(["tool:Grep"] * 3)
+        for event in events:
+            capture.activity_timeline.append(
+                MODULE.Activity("external-1", elapsed, event)
+            )
+            capture.activities["external-1"][event] += 1
+            elapsed += 1
+        capture.activity_timeline.append(
+            MODULE.Activity("external-1", elapsed + 103, "result")
+        )
+        capture.activities["external-1"]["result"] += 1
+
+        report = MODULE.render_markdown(capture, "now")
+
+        self.assertIn("## Diagnostic Signals", report)
+        self.assertIn("tool_error_event", report)
+        self.assertIn("explorer_tool_mismatch", report)
+        self.assertIn("long_activity_gap", report)
+        self.assertIn("104", report)
+        self.assertIn("zero_terminal_evidence", report)
+        self.assertIn("read_heavy_exploration", report)
+        self.assertNotIn("No known runner failure signature", report)
+
+    def test_signal_thresholds_do_not_overstate_small_or_short_activity(self) -> None:
+        activities = [("external-1", index, "tool:Read") for index in range(14)]
+        activities.extend(
+            [
+                ("external-1", 14, "tool:Grep"),
+                ("external-1", 73, "result"),
+            ]
+        )
+
+        signals = MODULE.analyze_signals(
+            (("explorer", False),),
+            tuple(activities),
+            (("DONE", 1, 0),),
+        )
+
+        self.assertEqual(signals, ())
+
+    def test_zero_evidence_signal_requires_dialogue_invocation(self) -> None:
+        signals = MODULE.analyze_signals(
+            (("explorer", False),),
+            (),
+            (("DONE_WITH_CONCERNS", 0, 1),),
+        )
+
+        self.assertNotIn(
+            "zero_terminal_evidence", {signal.name for signal in signals}
+        )
+
+    def test_zero_evidence_signal_does_not_guess_across_mixed_invocations(self) -> None:
+        signals = MODULE.analyze_signals(
+            (("explorer", True), ("writer", False)),
+            (),
+            (("DONE_WITH_CONCERNS", 0, 1),),
+        )
+
+        self.assertNotIn(
+            "zero_terminal_evidence", {signal.name for signal in signals}
+        )
+
     def test_capture_omits_raw_prompt_command_and_secret(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -313,7 +399,7 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertNotIn("secret-agent", report)
         self.assertNotIn("secret-path", report)
 
-    def test_default_output_is_timestamped_and_non_overwriting(self) -> None:
+    def test_explicit_output_is_non_overwriting(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
@@ -345,6 +431,180 @@ class CaptureSessionTests(unittest.TestCase):
 
         self.assertEqual(first, 0)
         self.assertEqual(second, 1)
+
+    def test_default_capture_reuses_existing_report_when_fingerprint_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            reports = root / "reports"
+            _write_rollout(rollout, session_id)
+
+            first_stdout = io.StringIO()
+            second_stdout = io.StringIO()
+            with redirect_stdout(first_stdout), redirect_stderr(io.StringIO()):
+                first = MODULE.main(
+                    [
+                        "--session-id",
+                        session_id,
+                        "--session-file",
+                        str(rollout),
+                        "--output-root",
+                        str(reports),
+                    ]
+                )
+            with redirect_stdout(second_stdout), redirect_stderr(io.StringIO()):
+                second = MODULE.main(
+                    [
+                        "--session-id",
+                        session_id,
+                        "--session-file",
+                        str(rollout),
+                        "--output-root",
+                        str(reports),
+                    ]
+                )
+
+            created = list(reports.glob(f"{session_id}-*.md"))
+
+        self.assertEqual(first, 0)
+        self.assertEqual(second, 0)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(first_stdout.getvalue(), second_stdout.getvalue())
+        self.assertRegex(created[0].name, rf"^{session_id}-[0-9a-f]{{16}}\.md$")
+
+    def test_concurrent_identical_default_captures_both_reuse_one_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            reports = root / "reports"
+            _write_rollout(rollout, session_id)
+            args = [
+                "--session-id",
+                session_id,
+                "--session-file",
+                str(rollout),
+                "--output-root",
+                str(reports),
+            ]
+            barrier = threading.Barrier(2)
+            exit_codes: list[int] = []
+
+            def capture() -> None:
+                barrier.wait()
+                exit_codes.append(MODULE.main(args))
+
+            with mock.patch("builtins.print"):
+                threads = [threading.Thread(target=capture) for _ in range(2)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+
+            created = list(reports.glob(f"{session_id}-*.md"))
+
+        self.assertEqual(sorted(exit_codes), [0, 0])
+        self.assertEqual(len(created), 1)
+
+    def test_report_schema_change_does_not_reuse_stale_capture(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            reports = root / "reports"
+            _write_rollout(rollout, session_id)
+            args = [
+                "--session-id",
+                session_id,
+                "--session-file",
+                str(rollout),
+                "--output-root",
+                str(reports),
+            ]
+
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                first = MODULE.main(args)
+            with mock.patch.object(
+                MODULE, "REPORT_SCHEMA_VERSION", MODULE.REPORT_SCHEMA_VERSION + 1
+            ):
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    second = MODULE.main(args)
+
+            created = list(reports.glob(f"{session_id}-*.md"))
+
+        self.assertEqual(first, 0)
+        self.assertEqual(second, 0)
+        self.assertEqual(len(created), 2)
+
+    def test_existing_report_finds_fingerprint_after_extended_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            fingerprint = "0123456789abcdef"
+            report = root / f"{session_id}-existing.md"
+            report.write_text(
+                "# MiniMax Subagent Session Capture\n"
+                + f"- Session ID: `{session_id}`\n"
+                + f"- Report schema version: `{MODULE.REPORT_SCHEMA_VERSION}`\n"
+                + "".join(f"- Extended metadata {index}\n" for index in range(20))
+                + f"- Capture fingerprint: `{fingerprint}`\n"
+                + f"{MODULE.REPORT_COMPLETE_MARKER}\n",
+                encoding="utf-8",
+            )
+            report.chmod(0o600)
+
+            existing = MODULE._existing_report(root, session_id, fingerprint)
+
+        self.assertEqual(existing, report)
+
+    def test_existing_report_rejects_unsafe_mode_and_incomplete_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            fingerprint = "0123456789abcdef"
+            report = root / f"{session_id}-{fingerprint}.md"
+            complete = (
+                "# MiniMax Subagent Session Capture\n"
+                f"- Session ID: `{session_id}`\n"
+                f"- Capture fingerprint: `{fingerprint}`\n"
+                f"- Report schema version: `{MODULE.REPORT_SCHEMA_VERSION}`\n"
+                f"{MODULE.REPORT_COMPLETE_MARKER}\n"
+            )
+            report.write_text(complete, encoding="utf-8")
+            report.chmod(0o644)
+
+            unsafe = MODULE._existing_report(root, session_id, fingerprint)
+            report.chmod(0o600)
+            report.write_text(complete.replace(MODULE.REPORT_COMPLETE_MARKER, ""), encoding="utf-8")
+            incomplete = MODULE._existing_report(root, session_id, fingerprint)
+
+        self.assertIsNone(unsafe)
+        self.assertIsNone(incomplete)
+
+    def test_existing_report_rejects_content_over_actual_byte_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            fingerprint = "0123456789abcdef"
+            report = root / f"{session_id}-{fingerprint}.md"
+            report.write_bytes(b"x" * (MODULE.REPORT_MAX_BYTES + 1))
+            report.chmod(0o600)
+
+            existing = MODULE._existing_report(root, session_id, fingerprint)
+
+        self.assertIsNone(existing)
+
+    def test_write_report_rejects_content_over_limit_before_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "report.md"
+            content = "é" * (MODULE.REPORT_MAX_BYTES // 2 + 1)
+
+            with self.assertRaisesRegex(ValueError, "byte limit"):
+                MODULE._write_report(output, content, force=False)
+
+            self.assertFalse(output.exists())
+            self.assertEqual(list(output.parent.glob(f".{output.name}.*.tmp")), [])
 
     def test_resolve_session_rejects_ambiguous_matches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

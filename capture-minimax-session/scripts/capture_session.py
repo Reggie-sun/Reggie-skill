@@ -7,16 +7,32 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from session_signals import (  # noqa: E402
+    DiagnosticSignal,
+    analyze_signals,
+    optimization_leads,
+    stable_fingerprint,
+)
+
 
 DEFAULT_SESSIONS_ROOT = Path("/home/reggie/.codex/sessions")
 DEFAULT_OUTPUT_ROOT = Path("/home/reggie/.codex/session-diagnostics/minimax")
+REPORT_SCHEMA_VERSION = 3
+REPORT_MAX_BYTES = 2_000_000
+REPORT_COMPLETE_MARKER = "<!-- capture-minimax-session:complete -->"
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
 ACTIVITY_RE = re.compile(
     r"\[sub-agent\]\s+activity\s+cli=minimax\s+elapsed=(\d+)s\s+"
@@ -605,12 +621,95 @@ def _optimization_leads(capture: Capture) -> list[str]:
         leads.append("Compare repeated prompt hashes against the bounded fresh-retry policy.")
     if not capture.terminals and capture.invocations:
         leads.append("No MiniMax terminal record was captured; inspect process attachment and output routing.")
+    leads.extend(optimization_leads(_diagnostic_signals(capture)))
     if not leads:
         leads.append("No known runner failure signature was detected; inspect efficiency and evidence quality manually.")
     return leads
 
 
+def _diagnostic_signals(capture: Capture) -> tuple[DiagnosticSignal, ...]:
+    return analyze_signals(
+        ((item.agent, item.dialogue) for item in capture.invocations),
+        tuple(
+            (item.external_session, item.elapsed_seconds, item.event)
+            for item in capture.activity_timeline
+        ),
+        tuple(
+            (item.agent_status, item.evidence_count, item.concern_count)
+            for item in capture.terminals
+        ),
+    )
+
+
+def _capture_fingerprint(capture: Capture) -> str:
+    return stable_fingerprint(
+        {
+            "session_id": capture.session_id,
+            "report_schema_version": REPORT_SCHEMA_VERSION,
+            "invocations": [item.__dict__ for item in capture.invocations],
+            "terminals": [item.__dict__ for item in capture.terminals],
+            "activities": [item.__dict__ for item in capture.activity_timeline],
+            "failure_counts": dict(sorted(capture.failure_counts.items())),
+        }
+    )
+
+
+def _existing_report(
+    output_root: Path, session_id: str, fingerprint: str
+) -> Path | None:
+    marker = f"- Capture fingerprint: `{fingerprint}`"
+    required_lines = {
+        "# MiniMax Subagent Session Capture",
+        f"- Session ID: `{session_id}`",
+        f"- Report schema version: `{REPORT_SCHEMA_VERSION}`",
+        marker,
+    }
+    if not output_root.is_dir():
+        return None
+    for candidate in sorted(output_root.glob(f"{session_id}-*.md"), reverse=True):
+        descriptor: int | None = None
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(candidate, flags)
+            before = os.fstat(descriptor)
+            if not stat.S_ISREG(before.st_mode):
+                continue
+            if stat.S_IMODE(before.st_mode) != 0o600:
+                continue
+            if before.st_size > REPORT_MAX_BYTES:
+                continue
+            chunks: list[bytes] = []
+            total = 0
+            while total <= REPORT_MAX_BYTES:
+                chunk = os.read(
+                    descriptor,
+                    min(65_536, REPORT_MAX_BYTES + 1 - total),
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                total += len(chunk)
+            after = os.fstat(descriptor)
+            if total > REPORT_MAX_BYTES or after.st_size != before.st_size:
+                continue
+            content = b"".join(chunks).decode("utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        lines = set(content.splitlines())
+        if required_lines.issubset(lines) and content.endswith(
+            REPORT_COMPLETE_MARKER + "\n"
+        ):
+            return candidate
+    return None
+
+
 def render_markdown(capture: Capture, captured_at: str) -> str:
+    fingerprint = _capture_fingerprint(capture)
+    diagnostic_signals = _diagnostic_signals(capture)
     lines = [
         "# MiniMax Subagent Session Capture",
         "",
@@ -620,6 +719,8 @@ def render_markdown(capture: Capture, captured_at: str) -> str:
         f"- Source rollout: `{_markdown(capture.source_path)}`",
         f"- Source cwd: `{_markdown(capture.source_cwd)}`",
         f"- Captured at: `{_markdown(captured_at)}`",
+        f"- Capture fingerprint: `{fingerprint}`",
+        f"- Report schema version: `{REPORT_SCHEMA_VERSION}`",
         f"- JSONL lines: `{capture.line_count}`",
         f"- Malformed lines skipped: `{capture.malformed_lines}`",
         "",
@@ -704,6 +805,22 @@ def render_markdown(capture: Capture, captured_at: str) -> str:
     else:
         lines.append("- No known failure marker detected.")
 
+    lines.extend(["", "## Diagnostic Signals", ""])
+    if diagnostic_signals:
+        lines.extend(
+            [
+                "| Signal | Count | Detail |",
+                "|---|---:|---|",
+            ]
+        )
+        for signal in diagnostic_signals:
+            lines.append(
+                f"| `{_markdown(signal.name)}` | {signal.count} | "
+                f"{_markdown(signal.detail)} |"
+            )
+    else:
+        lines.append("- No activity-level diagnostic signal detected.")
+
     lines.extend(["", "## Optimization Leads", ""])
     lines.extend(f"- {lead}" for lead in _optimization_leads(capture))
     lines.extend(
@@ -717,24 +834,44 @@ def render_markdown(capture: Capture, captured_at: str) -> str:
             "- Invocation and activity records do not prove task correctness.",
             "- Re-open the source rollout only with narrow, redacted queries for a specific hypothesis.",
             "",
+            REPORT_COMPLETE_MARKER,
+            "",
         ]
     )
     return "\n".join(lines)
 
 
-def _default_output(session_id: str, output_root: Path, captured_at: datetime) -> Path:
-    stamp = captured_at.strftime("%Y%m%dT%H%M%SZ")
-    return output_root / f"{session_id}-{stamp}.md"
+def _default_output(session_id: str, fingerprint: str, output_root: Path) -> Path:
+    return output_root / f"{session_id}-{fingerprint}.md"
 
 
 def _write_report(output: Path, content: str, force: bool) -> None:
-    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
-    flags |= os.O_TRUNC if force else os.O_EXCL
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(output, flags, 0o600)
-    os.fchmod(descriptor, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(content)
+    encoded = content.encode("utf-8")
+    if len(encoded) > REPORT_MAX_BYTES:
+        raise ValueError(
+            f"Report exceeds the {REPORT_MAX_BYTES}-byte limit."
+        )
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output.parent,
+        prefix=f".{output.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if force:
+            os.replace(temporary, output)
+        else:
+            os.link(temporary, output, follow_symlinks=False)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
@@ -761,17 +898,37 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError(f"Session file must be a regular non-symlink file: {source}")
         captured_at_dt = datetime.now(timezone.utc)
         capture = capture_session(args.session_id, source)
+        if args.output is None:
+            existing = _existing_report(
+                args.output_root,
+                args.session_id,
+                _capture_fingerprint(capture),
+            )
+            if existing is not None:
+                print(existing)
+                return 0
+        fingerprint = _capture_fingerprint(capture)
         output = args.output or _default_output(
-            args.session_id, args.output_root, captured_at_dt
+            args.session_id,
+            fingerprint,
+            args.output_root,
         )
         if output.is_symlink():
             raise ValueError(f"Output path must not be a symlink: {output}")
         output.parent.mkdir(parents=True, exist_ok=True)
-        _write_report(
-            output,
-            render_markdown(capture, captured_at_dt.isoformat()),
-            force=args.force,
-        )
+        try:
+            _write_report(
+                output,
+                render_markdown(capture, captured_at_dt.isoformat()),
+                force=args.force,
+            )
+        except FileExistsError:
+            if args.output is not None:
+                raise
+            winner = _existing_report(args.output_root, args.session_id, fingerprint)
+            if winner is None:
+                raise
+            output = winner
     except (OSError, ValueError) as exc:
         print(f"error: {_redact(str(exc), 400)}", file=sys.stderr)
         return 1
