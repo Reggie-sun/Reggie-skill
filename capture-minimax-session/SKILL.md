@@ -1,0 +1,58 @@
+---
+name: capture-minimax-session
+description: Capture a completed Codex session's external MiniMax subagent activity into a sanitized Markdown diagnostic. Use only when the user explicitly asks to record, capture, audit, summarize, or preserve MiniMax/sub-agents CLI behavior from the current session or a supplied Codex session ID for later sub-agents skill optimization.
+---
+
+# Capture MiniMax Session
+
+Create a post-task diagnostic artifact from the session JSONL without copying raw prompts, commands, environment values, credentials, or full tool output.
+
+## Workflow
+
+1. Confirm the task is complete or at a stable stopping point. This skill records history; it does not complete the task or modify `sub-agents`.
+2. Resolve the session:
+   - Prefer a session ID explicitly supplied by the user.
+   - Otherwise use `CODEX_THREAD_ID`.
+   - If neither exists, stop and request the exact session ID. Do not guess from the newest file when concurrent sessions may exist.
+3. Run:
+
+   ```bash
+   python3 {SKILL_DIR}/scripts/capture_session.py --session-id <session-id>
+   ```
+
+   `{SKILL_DIR}` is the directory containing this `SKILL.md`.
+4. Read the generated report and verify:
+   - the source session ID and rollout path are correct;
+   - MiniMax terminal truth keeps `status`, `transport_exit_code`, `cli_exit_code`, `termination_reason`, and `agent_status` separate;
+   - invocation rows contain only flag shape, counts, command families, prompt length, and prompt hash;
+   - no prompt, exact command, API key, environment value, full JSONL line, or full provider result appears.
+5. Report the output path and the most important runner-level signatures. Keep application-code conclusions separate from runner/skill optimization evidence.
+
+## Output Location
+
+Default reports are timestamped and written under:
+
+```text
+/home/reggie/.codex/session-diagnostics/minimax/<session-id>-<timestamp>.md
+```
+
+Use `--output <path>` only when the user requests a specific destination. The script refuses to overwrite an existing report unless `--force` is explicit.
+
+## Interpretation Boundaries
+
+- An invocation record proves that `run_subagent.py` was requested, not that the backend started.
+- Activity events prove observed provider/runner events, not task correctness.
+- `status=success` is transport truth; use `agent_status` for the dialogue task state.
+- A missing terminal result remains unresolved; do not infer success from prose or edits.
+- Repeated prompt hashes suggest a retry, but do not prove the retry was unjustified.
+- Terminal rows come only from a schema-valid final runner envelope associated with the original invocation or its attached process polls; provider prose is not terminal truth.
+- Error output is reduced to allowlisted categories such as `protocol` or `evidence_incomplete`; exact error prose is never copied.
+- The report intentionally omits semantic task output. Re-open the source session narrowly if a specific optimization hypothesis requires more evidence.
+
+## Safety
+
+- Never `cat` or broadly `rg` the whole rollout into model context.
+- Never add `--include-raw`, raw-prompt, raw-command, or environment-dump behavior.
+- Never persist credentials found in historical output.
+- Reports are created atomically with mode `600`; `--force` never follows an output symlink.
+- Do not automatically edit, commit, or push `sub-agents` after capture. Optimization is a separate user-authorized task with its own tests, paid MiniMax gate, and native review.

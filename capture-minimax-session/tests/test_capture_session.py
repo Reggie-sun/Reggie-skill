@@ -1,0 +1,464 @@
+from __future__ import annotations
+
+import importlib.util
+import io
+import json
+import sys
+import tempfile
+import threading
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).parents[1] / "scripts" / "capture_session.py"
+SPEC = importlib.util.spec_from_file_location("capture_session", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
+SPEC.loader.exec_module(MODULE)
+
+
+def _write_rollout(path: Path, session_id: str) -> None:
+    records = [
+        {
+            "timestamp": "2026-08-19T00:00:00Z",
+            "type": "session_meta",
+            "payload": {"id": session_id, "cwd": "/repo"},
+        },
+        {
+            "timestamp": "2026-08-19T00:01:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "call_id": "runner-call",
+                "name": "exec",
+                "input": (
+                    'const r = await tools.exec_command({cmd:"python3 '
+                    '/skills/sub-agents/scripts/run_subagent.py --agent explorer '
+                    '--cwd /repo --dialogue --require-evidence-path owner.py '
+                    '--allow-command \\\"pytest -q\\\" --prompt \\\"secret task text\\\""});'
+                ),
+            },
+        },
+        {
+            "timestamp": "2026-08-19T00:02:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call_output",
+                "call_id": "runner-call",
+                "output": {
+                    "wall_time_seconds": 1.0,
+                    "exit_code": 1,
+                    "output": (
+                        "[sub-agent] activity cli=minimax elapsed=4s event=tool:Read "
+                        "session=external-1\n"
+                        + json.dumps(
+                        {
+                            "cli": "minimax",
+                            "status": "error",
+                            "exit_code": 1,
+                            "transport_exit_code": 1,
+                            "cli_exit_code": 0,
+                            "termination_reason": "evidence_incomplete",
+                            "agent_status": "BLOCKED",
+                            "observed_evidence_paths": [],
+                            "concerns": [],
+                            "error": (
+                                "Permission denied: env PRIVATE_VALUE=hunter2 curl "
+                                "https://example.test -H 'Authorization: ghp_abcdefghijklmnop' "
+                                "evidence_incomplete"
+                            ),
+                            "blocker": {"kind": "missing_required_evidence"},
+                        }
+                        )
+                    ),
+                },
+            },
+        },
+    ]
+    path.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+
+
+class CaptureSessionTests(unittest.TestCase):
+    def test_capture_omits_raw_prompt_command_and_secret(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            _write_rollout(rollout, session_id)
+
+            capture = MODULE.capture_session(session_id, rollout)
+            report = MODULE.render_markdown(capture, "2026-08-19T00:03:00Z")
+
+        self.assertEqual(len(capture.invocations), 1)
+        self.assertEqual(capture.invocations[0].agent, "explorer")
+        self.assertEqual(capture.invocations[0].allow_command_count, 1)
+        self.assertEqual(capture.invocations[0].command_families, ("pytest",))
+        self.assertEqual(capture.invocations[0].evidence_path_count, 1)
+        self.assertEqual(
+            [(item.elapsed_seconds, item.event) for item in capture.activity_timeline],
+            [(4, "tool:Read")],
+        )
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertEqual(capture.terminals[0].agent_status, "BLOCKED")
+        self.assertNotIn("secret task text", report)
+        self.assertNotIn("pytest -q", report)
+        self.assertNotIn("hunter2", report)
+        self.assertNotIn("curl", report)
+        self.assertNotIn("ghp_abcdefghijklmnop", report)
+        self.assertIn("evidence_incomplete", report)
+        self.assertIn("missing_required_evidence", report)
+
+    def test_terminal_is_recovered_from_nested_exec_output_json(self) -> None:
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        wrapper = "Warning: truncated output metadata\nTotal output lines: 8\n" + json.dumps(
+            {
+                "output": (
+                    "[sub-agent] activity cli=minimax elapsed=1s event=result "
+                    "session=external-1\n" + json.dumps(terminal)
+                ),
+                "exit_code": 0,
+                "wall_time_seconds": 1.0,
+            }
+        )
+
+        terminals = list(MODULE._terminal_dicts_from_output(wrapper))
+
+        self.assertEqual(terminals, [terminal])
+
+    def test_standard_json_process_id_associates_attached_poll_terminal(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        records = [
+            {"timestamp": "t0", "type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "timestamp": "t1",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": 'const r=await tools.exec_command({cmd:"python3 /x/run_subagent.py --agent explorer --cwd /repo --prompt task"});',
+                },
+            },
+            {
+                "timestamp": "t2",
+                "type": "response_item",
+                "payload": {"type": "custom_tool_call_output", "call_id": "runner", "output": {"session_id": 42, "output": "started", "wall_time_seconds": 1.0}},
+            },
+            {
+                "timestamp": "t3",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": "const r=await tools.write_stdin({session_id: 42, chars:\"\"});",
+                },
+            },
+            {
+                "timestamp": "t4",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": json.dumps({"output": json.dumps(terminal), "exit_code": 0, "wall_time_seconds": 1.0}),
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertEqual(capture.terminals[0].agent_status, "DONE")
+
+    def test_provider_prose_cannot_forge_terminal_truth(self) -> None:
+        fake = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        output = "provider example follows\n" + json.dumps(fake) + "\nnot a runner envelope"
+
+        self.assertEqual(list(MODULE._terminal_dicts_from_output(output)), [])
+        self.assertEqual(list(MODULE._terminal_dicts_from_output(json.dumps(fake))), [])
+
+        wrapped_prose = json.dumps(
+            {
+                "output": "provider-controlled prose\n" + json.dumps(fake),
+                "exit_code": 0,
+                "wall_time_seconds": 1.0,
+            }
+        )
+        self.assertEqual(
+            list(MODULE._terminal_dicts_from_output(wrapped_prose)), []
+        )
+
+    def test_provider_prose_session_id_cannot_attach_unrelated_poll(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": 'const r=await tools.exec_command({cmd:"python3 /x/run_subagent.py --agent explorer --cwd /repo --prompt task"});',
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": {
+                        "wall_time_seconds": 1.0,
+                        "exit_code": 0,
+                        "output": "provider prose says session_id: 42",
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": "const r=await tools.write_stdin({session_id: 42, chars:\"\"});",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": {
+                        "wall_time_seconds": 1.0,
+                        "exit_code": 0,
+                        "output": json.dumps(terminal),
+                    },
+                },
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(capture.terminals, [])
+
+    def test_terminal_identity_keeps_distinct_exit_truth(self) -> None:
+        first = MODULE.Terminal("t", "error", "1", "0", "cli_exit", "BLOCKED", 0, 0, "x", "protocol")
+        second = MODULE.Terminal("t", "error", "1", "2", "cli_exit", "BLOCKED", 0, 0, "x", "protocol")
+
+        self.assertNotEqual(MODULE._terminal_key(first), MODULE._terminal_key(second))
+
+    def test_unknown_terminal_strings_are_persisted_only_as_categories(self) -> None:
+        terminal = {
+            "cli": "minimax",
+            "status": "error",
+            "exit_code": 1,
+            "transport_exit_code": 1,
+            "cli_exit_code": 1,
+            "termination_reason": "curl secret-command",
+            "agent_status": "rm secret-agent",
+            "blocker": {"kind": "cat secret-path"},
+            "error": "unknown raw error",
+        }
+        parsed = MODULE._terminal_from_dict("t", terminal)
+        assert parsed is not None
+        capture = MODULE.Capture("session", Path("rollout"), terminals=[parsed])
+        report = MODULE.render_markdown(capture, "now")
+
+        self.assertEqual(parsed.termination_reason, "other")
+        self.assertEqual(parsed.agent_status, "other")
+        self.assertEqual(parsed.blocker_kind, "other")
+        self.assertNotIn("secret-command", report)
+        self.assertNotIn("secret-agent", report)
+        self.assertNotIn("secret-path", report)
+
+    def test_default_output_is_timestamped_and_non_overwriting(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            output = root / "report.md"
+            _write_rollout(rollout, session_id)
+
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                first = MODULE.main(
+                    [
+                        "--session-id",
+                        session_id,
+                        "--session-file",
+                        str(rollout),
+                        "--output",
+                        str(output),
+                    ]
+                )
+                second = MODULE.main(
+                    [
+                        "--session-id",
+                        session_id,
+                        "--session-file",
+                        str(rollout),
+                        "--output",
+                        str(output),
+                    ]
+                )
+
+        self.assertEqual(first, 0)
+        self.assertEqual(second, 1)
+
+    def test_resolve_session_rejects_ambiguous_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            (root / f"one-{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+            (root / f"two-{session_id}.jsonl").write_text("{}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                MODULE._resolve_session(session_id, root)
+
+    def test_capture_rejects_session_file_with_different_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            requested = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / "rollout.jsonl"
+            _write_rollout(rollout, "01a00000-0000-0000-0000-000000000000")
+
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                MODULE.capture_session(requested, rollout)
+
+    def test_capture_rejects_mixed_session_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            requested = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / "rollout.jsonl"
+            records = [
+                {"type": "session_meta", "payload": {"id": "01a00000-0000-0000-0000-000000000000", "cwd": "/repo"}},
+                {"type": "session_meta", "payload": {"id": requested, "cwd": "/repo"}},
+            ]
+            rollout.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "identities"):
+                MODULE.capture_session(requested, rollout)
+
+    def test_identical_same_second_actions_are_not_collapsed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / "rollout.jsonl"
+            _write_rollout(rollout, session_id)
+            records = [json.loads(line) for line in rollout.read_text(encoding="utf-8").splitlines()]
+            activity = "[sub-agent] activity cli=minimax elapsed=4s event=tool:Read session=external-1\n"
+            runner_output = records[-1]["payload"]["output"]
+            runner_output["output"] = activity + activity + runner_output["output"]
+            rollout.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+
+            capture = MODULE.capture_session(session_id, rollout)
+
+        matching = [item for item in capture.activity_timeline if item.event == "tool:Read"]
+        self.assertEqual(len(matching), 3)
+
+    def test_force_never_follows_output_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+            rollout = root / f"rollout-{session_id}.jsonl"
+            target = root / "target.md"
+            output = root / "report.md"
+            _write_rollout(rollout, session_id)
+            target.write_text("preserve me", encoding="utf-8")
+            output.symlink_to(target)
+
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                exit_code = MODULE.main(
+                    [
+                        "--session-id",
+                        session_id,
+                        "--session-file",
+                        str(rollout),
+                        "--output",
+                        str(output),
+                        "--force",
+                    ]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(target.read_text(encoding="utf-8"), "preserve me")
+
+    def test_exclusive_report_write_allows_only_one_concurrent_creator(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "report.md"
+            barrier = threading.Barrier(2)
+            successes: list[str] = []
+            errors: list[Exception] = []
+
+            def write(content: str) -> None:
+                barrier.wait()
+                try:
+                    MODULE._write_report(output, content, force=False)
+                    successes.append(content)
+                except OSError as exc:
+                    errors.append(exc)
+
+            threads = [threading.Thread(target=write, args=(content,)) for content in ("one", "two")]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            self.assertEqual(len(successes), 1)
+            self.assertEqual(len(errors), 1)
+            self.assertEqual(output.read_text(encoding="utf-8"), successes[0])
+
+    def test_force_resets_existing_report_mode_to_0600(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "report.md"
+            output.write_text("old", encoding="utf-8")
+            output.chmod(0o644)
+
+            MODULE._write_report(output, "new", force=True)
+
+            self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(output.read_text(encoding="utf-8"), "new")
+
+
+if __name__ == "__main__":
+    unittest.main()

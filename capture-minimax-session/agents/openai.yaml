@@ -1,0 +1,6 @@
+interface:
+  display_name: "Capture MiniMax Session"
+  short_description: "Capture sanitized MiniMax subagent session diagnostics"
+  default_prompt: "Use $capture-minimax-session to capture MiniMax subagent activity from session <session-id>."
+policy:
+  allow_implicit_invocation: false

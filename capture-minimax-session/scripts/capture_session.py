@@ -1,0 +1,783 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shlex
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+
+DEFAULT_SESSIONS_ROOT = Path("/home/reggie/.codex/sessions")
+DEFAULT_OUTPUT_ROOT = Path("/home/reggie/.codex/session-diagnostics/minimax")
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
+ACTIVITY_RE = re.compile(
+    r"\[sub-agent\]\s+activity\s+cli=minimax\s+elapsed=(\d+)s\s+"
+    r"event=([^\s]+)(?:\s+session=([A-Za-z0-9._:-]+))?"
+)
+PROCESS_MARKER_RE = re.compile(r"^SESSION_ID=(\d+)$")
+POLL_SESSION_RE = re.compile(r"session_id\s*:\s*(\d+)")
+SECRET_PATTERNS = (
+    re.compile(r"\bsk-(?:cp-)?[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{12,}"),
+    re.compile(
+        r"(?i)\b(?:api[_-]?key|token|secret|password)\s*[=:]\s*[^\s,;]+"
+    ),
+)
+FAILURE_MARKERS = {
+    "permission_or_grant": re.compile(
+        r"(?i)permission denied|permission_denied|grant mismatch|not allowed"
+    ),
+    "timeout_or_stagnation": re.compile(
+        r"(?i)timeout|timed out|stagnation|unresponsive"
+    ),
+    "protocol": re.compile(r"(?i)protocol_error|dialogue_protocol_error"),
+    "evidence_incomplete": re.compile(r"(?i)evidence_incomplete"),
+    "runner_validation": re.compile(r"(?i)runner_validation|definition-resolution"),
+    "missing_terminal": re.compile(r"(?i)missing_terminal_result"),
+}
+TERMINATION_REASONS = frozenset(
+    {
+        "cli_exit",
+        "dialogue_protocol_error",
+        "evidence_incomplete",
+        "idle_timeout",
+        "missing_terminal_result",
+        "output_limit",
+        "permission_denied",
+        "process_error",
+        "runner_validation",
+        "semantic_stagnation",
+        "structured_output_retry_exhausted",
+        "tool_error_loop",
+        "transport_timeout",
+    }
+)
+AGENT_STATUSES = frozenset(
+    {"DONE", "DONE_WITH_CONCERNS", "NEEDS_CONTEXT", "BLOCKED", "PROTOCOL_ERROR"}
+)
+BLOCKER_KINDS = frozenset(
+    {
+        "grant_mismatch",
+        "missing_required_evidence",
+        "permission_denied",
+        "tool_error_loop",
+    }
+)
+
+
+@dataclass
+class Invocation:
+    timestamp: str
+    agent: str = "unknown"
+    requested_cli: str = "definition/default"
+    cwd: str = "unknown"
+    dialogue: bool = False
+    tdd: bool = False
+    allow_path_count: int = 0
+    allow_command_count: int = 0
+    command_families: tuple[str, ...] = ()
+    evidence_path_count: int = 0
+    prompt_chars: int = 0
+    prompt_sha256: str = "none"
+
+    @property
+    def retry_key(self) -> tuple[str, str, str]:
+        return self.agent, self.cwd, self.prompt_sha256
+
+
+@dataclass
+class Terminal:
+    timestamp: str
+    status: str
+    transport_exit_code: str
+    cli_exit_code: str
+    termination_reason: str
+    agent_status: str
+    evidence_count: int
+    concern_count: int
+    blocker_kind: str
+    error_signature: str
+
+
+@dataclass
+class Activity:
+    external_session: str
+    elapsed_seconds: int
+    event: str
+
+
+@dataclass
+class Capture:
+    session_id: str
+    source_path: Path
+    source_cwd: str = "unknown"
+    line_count: int = 0
+    malformed_lines: int = 0
+    invocations: list[Invocation] = field(default_factory=list)
+    terminals: list[Terminal] = field(default_factory=list)
+    activity_timeline: list[Activity] = field(default_factory=list)
+    activities: dict[str, Counter[str]] = field(
+        default_factory=lambda: defaultdict(Counter)
+    )
+    max_elapsed: dict[str, int] = field(default_factory=dict)
+    failure_counts: Counter[str] = field(default_factory=Counter)
+
+
+def _redact(value: str, limit: int = 240) -> str:
+    redacted = value.replace("\x00", "")
+    for pattern in SECRET_PATTERNS:
+        redacted = pattern.sub("<redacted>", redacted)
+    redacted = " ".join(redacted.split())
+    if len(redacted) > limit:
+        redacted = redacted[: limit - 1] + "…"
+    return redacted
+
+
+def _markdown(value: object) -> str:
+    return _redact(str(value)).replace("|", "\\|")
+
+
+def _resolve_session(session_id: str, sessions_root: Path) -> Path:
+    if not SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError("Session ID must contain only letters, digits, and hyphens.")
+    if not sessions_root.is_dir():
+        raise ValueError(f"Sessions root does not exist: {sessions_root}")
+    matches = sorted(sessions_root.rglob(f"*{session_id}*.jsonl"))
+    regular = [path for path in matches if path.is_file() and not path.is_symlink()]
+    if not regular:
+        raise ValueError(f"No rollout JSONL found for session {session_id}.")
+    if len(regular) != 1:
+        paths = ", ".join(str(path) for path in regular[:5])
+        raise ValueError(f"Session {session_id} is ambiguous: {paths}")
+    return regular[0]
+
+
+def _text_values(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            if key in {"data", "blob", "image_url", "audio_url"}:
+                continue
+            yield from _text_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _text_values(child)
+
+
+def _extract_cmd(raw_input: Any) -> str | None:
+    if isinstance(raw_input, dict) and isinstance(raw_input.get("cmd"), str):
+        return raw_input["cmd"]
+    if not isinstance(raw_input, str):
+        return None
+    try:
+        decoded = json.loads(raw_input)
+    except json.JSONDecodeError:
+        decoded = None
+    if isinstance(decoded, dict) and isinstance(decoded.get("cmd"), str):
+        return decoded["cmd"]
+    match = re.search(r'\bcmd\s*:\s*("(?:\\.|[^"\\])*")', raw_input)
+    if match:
+        try:
+            command = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            command = None
+        if isinstance(command, str):
+            return command
+    stripped = raw_input.strip()
+    if "run_subagent.py" in stripped and stripped.startswith(("python", "/")):
+        return stripped
+    return None
+
+
+def _runner_args(command: str) -> list[str] | None:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    for index, token in enumerate(tokens[:-1]):
+        if Path(token).name.startswith("python") and Path(tokens[index + 1]).name == "run_subagent.py":
+            return tokens[index + 2 :]
+    return None
+
+
+def _flag_values(args: list[str], flag: str) -> list[str]:
+    values: list[str] = []
+    for index, token in enumerate(args):
+        if token == flag and index + 1 < len(args):
+            values.append(args[index + 1])
+        elif token.startswith(flag + "="):
+            values.append(token.split("=", 1)[1])
+    return values
+
+
+def _command_family(command: str) -> str:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return "unparseable"
+    if not tokens:
+        return "empty"
+    index = 0
+    while index < len(tokens) and "=" in tokens[index] and not tokens[index].startswith("-"):
+        index += 1
+    return Path(tokens[index]).name if index < len(tokens) else "environment-only"
+
+
+def _parse_invocation(timestamp: str, raw_input: Any) -> Invocation | None:
+    command = _extract_cmd(raw_input)
+    if command is None:
+        return None
+    args = _runner_args(command)
+    if args is None:
+        return None
+    agent_values = _flag_values(args, "--agent")
+    cwd_values = _flag_values(args, "--cwd")
+    cli_values = _flag_values(args, "--cli")
+    prompts = _flag_values(args, "--prompt")
+    prompt = prompts[-1] if prompts else ""
+    commands = _flag_values(args, "--allow-command")
+    agent = agent_values[-1] if agent_values else "unknown"
+    if "/" in agent:
+        agent = Path(agent).stem
+    return Invocation(
+        timestamp=timestamp,
+        agent=_redact(agent, 80),
+        requested_cli=_redact(cli_values[-1], 40) if cli_values else "definition/default",
+        cwd=_redact(cwd_values[-1], 180) if cwd_values else "unknown",
+        dialogue="--dialogue" in args,
+        tdd="--tdd" in args,
+        allow_path_count=len(_flag_values(args, "--allow-path")),
+        allow_command_count=len(commands),
+        command_families=tuple(sorted({_command_family(item) for item in commands})),
+        evidence_path_count=len(_flag_values(args, "--require-evidence-path")),
+        prompt_chars=len(prompt),
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
+        if prompt
+        else "none",
+    )
+
+
+def _decode_json_dict(value: str) -> dict[str, Any] | None:
+    stripped = value.strip()
+    if not stripped:
+        return None
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        if not stripped.startswith(r"{\""):
+            return None
+        try:
+            decoded = json.loads(json.loads('"' + stripped + '"'))
+        except (json.JSONDecodeError, TypeError):
+            return None
+    return decoded if isinstance(decoded, dict) else None
+
+
+def _is_terminal_envelope(value: dict[str, Any]) -> bool:
+    if value.get("cli") != "minimax":
+        return False
+    if value.get("status") not in {"success", "error", "partial"}:
+        return False
+    if not isinstance(value.get("exit_code"), int):
+        return False
+    if not isinstance(value.get("transport_exit_code"), int):
+        return False
+    if value.get("cli_exit_code") is not None and not isinstance(
+        value.get("cli_exit_code"), int
+    ):
+        return False
+    if not isinstance(value.get("termination_reason"), str):
+        return False
+    if "agent_status" in value and not isinstance(value.get("agent_status"), str):
+        return False
+    return True
+
+
+def _is_exec_wrapper(value: dict[str, Any]) -> bool:
+    if not isinstance(value.get("output"), (dict, list, str)):
+        return False
+    if not isinstance(value.get("wall_time_seconds"), (int, float)):
+        return False
+    exit_code = value.get("exit_code")
+    process_id = value.get("session_id")
+    valid_exit = isinstance(exit_code, int)
+    valid_process = isinstance(process_id, int) or (
+        isinstance(process_id, str) and process_id.isdigit()
+    )
+    return valid_exit or valid_process
+
+
+def _transport_wrappers_from_output(output: Any) -> Iterable[dict[str, Any]]:
+    if isinstance(output, list):
+        for item in output:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                yield from _transport_wrappers_from_output(item["text"])
+            elif isinstance(item, (dict, list, str)):
+                yield from _transport_wrappers_from_output(item)
+        return
+    if isinstance(output, dict):
+        if _is_exec_wrapper(output):
+            yield output
+        return
+    if not isinstance(output, str):
+        return
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    candidates = (output, lines[-1] if lines else "")
+    for candidate_text in candidates:
+        candidate = _decode_json_dict(candidate_text)
+        if candidate is not None and _is_exec_wrapper(candidate):
+            yield candidate
+            return
+
+
+def _terminal_dicts_from_output(output: Any) -> Iterable[dict[str, Any]]:
+    for wrapper in _transport_wrappers_from_output(output):
+        runner_output = wrapper["output"]
+        if not isinstance(runner_output, str):
+            continue
+        lines = [line.strip() for line in runner_output.splitlines() if line.strip()]
+        if not lines:
+            continue
+        if any(
+            ACTIVITY_RE.fullmatch(line) is None
+            and PROCESS_MARKER_RE.fullmatch(line) is None
+            for line in lines[:-1]
+        ):
+            continue
+        candidate = _decode_json_dict(lines[-1])
+        if candidate is not None and _is_terminal_envelope(candidate):
+            yield candidate
+
+
+def _process_ids_from_output(output: Any) -> set[str]:
+    process_ids: set[str] = set()
+    for wrapper in _transport_wrappers_from_output(output):
+        value = wrapper.get("session_id")
+        if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+            process_ids.add(str(value))
+    for text in _text_values(output):
+        for line in text.splitlines():
+            match = PROCESS_MARKER_RE.fullmatch(line.strip())
+            if match:
+                process_ids.add(match.group(1))
+    return process_ids
+
+
+def _categorical(value: object, allowed: frozenset[str]) -> str:
+    if not isinstance(value, str) or not value:
+        return "unknown"
+    return value if value in allowed else "other"
+
+
+def _terminal_from_dict(timestamp: str, value: dict[str, Any]) -> Terminal | None:
+    if not _is_terminal_envelope(value):
+        return None
+    blocker = value.get("blocker")
+    raw_blocker_kind = blocker.get("kind") if isinstance(blocker, dict) else None
+    blocker_kind = (
+        _categorical(raw_blocker_kind, BLOCKER_KINDS)
+        if raw_blocker_kind is not None
+        else "none"
+    )
+    observed = value.get("observed_evidence_paths")
+    concerns = value.get("concerns")
+    error = value.get("error", "")
+    category_text = " ".join(
+        str(item)
+        for item in (
+            value.get("status", ""),
+            _categorical(value.get("termination_reason"), TERMINATION_REASONS),
+            _categorical(value.get("agent_status"), AGENT_STATUSES),
+            blocker_kind,
+            error if isinstance(error, str) else "",
+        )
+    )
+    categories = tuple(
+        name for name, pattern in FAILURE_MARKERS.items() if pattern.search(category_text)
+    )
+    error_signature = ",".join(categories)
+    if not error_signature and isinstance(error, str) and error:
+        error_signature = "unclassified_error"
+    if not error_signature:
+        error_signature = "none"
+    return Terminal(
+        timestamp=timestamp,
+        status=str(value.get("status", "unknown")),
+        transport_exit_code=str(value.get("transport_exit_code", "unknown")),
+        cli_exit_code=str(value.get("cli_exit_code", "unknown")),
+        termination_reason=_categorical(
+            value.get("termination_reason"), TERMINATION_REASONS
+        ),
+        agent_status=_categorical(value.get("agent_status"), AGENT_STATUSES),
+        evidence_count=len(observed) if isinstance(observed, list) else 0,
+        concern_count=len(concerns) if isinstance(concerns, list) else 0,
+        blocker_kind=_redact(str(blocker_kind), 80),
+        error_signature=error_signature,
+    )
+
+
+def _terminal_key(terminal: Terminal) -> tuple[object, ...]:
+    return (
+        terminal.timestamp,
+        terminal.status,
+        terminal.transport_exit_code,
+        terminal.cli_exit_code,
+        terminal.termination_reason,
+        terminal.agent_status,
+        terminal.evidence_count,
+        terminal.concern_count,
+        terminal.blocker_kind,
+        terminal.error_signature,
+    )
+
+
+def _record_failure_markers(capture: Capture, text: str) -> None:
+    safe_text = _redact(text, 20_000)
+    for name, pattern in FAILURE_MARKERS.items():
+        if pattern.search(safe_text):
+            capture.failure_counts[name] += 1
+
+
+def capture_session(session_id: str, source_path: Path) -> Capture:
+    capture = Capture(session_id=session_id, source_path=source_path)
+    terminal_seen: set[tuple[object, ...]] = set()
+    records: list[dict[str, Any]] = []
+    source_session_ids: set[str] = set()
+
+    with source_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            capture.line_count += 1
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                capture.malformed_lines += 1
+                continue
+            if isinstance(record, dict):
+                records.append(record)
+                if record.get("type") == "session_meta":
+                    payload = record.get("payload")
+                    if isinstance(payload, dict) and isinstance(payload.get("id"), str):
+                        source_session_ids.add(payload["id"])
+
+    if not source_session_ids:
+        raise ValueError("Session file has no session_meta identity.")
+    if source_session_ids != {session_id}:
+        raise ValueError(
+            f"Session file identities {sorted(source_session_ids)!r} do not match "
+            f"the single requested session {session_id!r}."
+        )
+
+    outputs_by_call: dict[str, tuple[str, Any]] = {}
+    for record in records:
+        payload = record.get("payload")
+        if (
+            record.get("type") == "response_item"
+            and isinstance(payload, dict)
+            and payload.get("type") == "custom_tool_call_output"
+            and isinstance(payload.get("call_id"), str)
+        ):
+            outputs_by_call[payload["call_id"]] = (
+                str(record.get("timestamp", "unknown")),
+                payload.get("output"),
+            )
+
+    selected_call_ids: set[str] = set()
+    process_ids: set[str] = set()
+    for record in records:
+        payload = record.get("payload")
+        if not (
+            record.get("type") == "response_item"
+            and isinstance(payload, dict)
+            and payload.get("type") == "custom_tool_call"
+            and payload.get("name") == "exec"
+        ):
+            continue
+        invocation = _parse_invocation(
+            str(record.get("timestamp", "unknown")), payload.get("input")
+        )
+        if invocation is None:
+            continue
+        capture.invocations.append(invocation)
+        call_id = payload.get("call_id")
+        if isinstance(call_id, str):
+            selected_call_ids.add(call_id)
+            output_record = outputs_by_call.get(call_id)
+            if output_record is not None:
+                process_ids.update(_process_ids_from_output(output_record[1]))
+
+    if process_ids:
+        for record in records:
+            payload = record.get("payload")
+            if not (
+                record.get("type") == "response_item"
+                and isinstance(payload, dict)
+                and payload.get("type") == "custom_tool_call"
+                and payload.get("name") == "exec"
+                and isinstance(payload.get("input"), str)
+                and "tools.write_stdin" in payload["input"]
+            ):
+                continue
+            poll_ids = set(POLL_SESSION_RE.findall(payload["input"]))
+            if not poll_ids.intersection(process_ids):
+                continue
+            call_id = payload.get("call_id")
+            if isinstance(call_id, str):
+                selected_call_ids.add(call_id)
+
+    for record in records:
+            timestamp = str(record.get("timestamp", "unknown"))
+            if record.get("type") == "session_meta":
+                payload = record.get("payload")
+                if isinstance(payload, dict):
+                    capture.source_cwd = _redact(str(payload.get("cwd", "unknown")), 180)
+            payload = record.get("payload")
+            if not (
+                record.get("type") == "response_item"
+                and isinstance(payload, dict)
+                and payload.get("type") == "custom_tool_call_output"
+                and payload.get("call_id") in selected_call_ids
+            ):
+                continue
+            output = payload.get("output")
+            for text in _text_values(output):
+                for match in ACTIVITY_RE.finditer(text):
+                    elapsed = int(match.group(1))
+                    event = _redact(match.group(2), 80)
+                    external_session = _redact(match.group(3) or "unknown", 100)
+                    capture.activities[external_session][event] += 1
+                    capture.activity_timeline.append(
+                        Activity(
+                            external_session=external_session,
+                            elapsed_seconds=elapsed,
+                            event=event,
+                        )
+                    )
+                    capture.max_elapsed[external_session] = max(
+                        capture.max_elapsed.get(external_session, 0), elapsed
+                    )
+            for decoded in _terminal_dicts_from_output(output):
+                terminal = _terminal_from_dict(timestamp, decoded)
+                if terminal is None:
+                    continue
+                key = _terminal_key(terminal)
+                if key not in terminal_seen:
+                    terminal_seen.add(key)
+                    capture.terminals.append(terminal)
+                    _record_failure_markers(
+                        capture,
+                        " ".join(
+                            (
+                                terminal.status,
+                                terminal.termination_reason,
+                                terminal.agent_status,
+                                terminal.blocker_kind,
+                                terminal.error_signature,
+                            )
+                        ),
+                    )
+    return capture
+
+
+def _optimization_leads(capture: Capture) -> list[str]:
+    leads: list[str] = []
+    marker_to_lead = {
+        "permission_or_grant": "Inspect exact command/path grants and denial classification.",
+        "timeout_or_stagnation": "Inspect semantic-progress, heartbeat, and wall-clock termination behavior.",
+        "protocol": "Inspect dialogue schema normalization and terminal-envelope handling.",
+        "evidence_incomplete": "Inspect required-evidence selection and successful tool-result accounting.",
+        "runner_validation": "Inspect definition resolution and pre-backend invocation validation.",
+        "missing_terminal": "Inspect attached-process polling and clean terminal-result promotion.",
+    }
+    for marker, lead in marker_to_lead.items():
+        if capture.failure_counts.get(marker):
+            leads.append(lead)
+    retry_counts = Counter(item.retry_key for item in capture.invocations)
+    if any(count > 1 for count in retry_counts.values()):
+        leads.append("Compare repeated prompt hashes against the bounded fresh-retry policy.")
+    if not capture.terminals and capture.invocations:
+        leads.append("No MiniMax terminal record was captured; inspect process attachment and output routing.")
+    if not leads:
+        leads.append("No known runner failure signature was detected; inspect efficiency and evidence quality manually.")
+    return leads
+
+
+def render_markdown(capture: Capture, captured_at: str) -> str:
+    lines = [
+        "# MiniMax Subagent Session Capture",
+        "",
+        "## Metadata",
+        "",
+        f"- Session ID: `{_markdown(capture.session_id)}`",
+        f"- Source rollout: `{_markdown(capture.source_path)}`",
+        f"- Source cwd: `{_markdown(capture.source_cwd)}`",
+        f"- Captured at: `{_markdown(captured_at)}`",
+        f"- JSONL lines: `{capture.line_count}`",
+        f"- Malformed lines skipped: `{capture.malformed_lines}`",
+        "",
+        "## Invocation Shape",
+        "",
+    ]
+    if capture.invocations:
+        lines.extend(
+            [
+                "| # | Timestamp | Agent | Requested CLI | cwd | Dialogue | TDD | Paths | Commands | Command families | Evidence paths | Prompt chars | Prompt hash |",
+                "|---:|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|",
+            ]
+        )
+        for index, item in enumerate(capture.invocations, 1):
+            families = ", ".join(item.command_families) or "none"
+            lines.append(
+                f"| {index} | {_markdown(item.timestamp)} | {_markdown(item.agent)} | "
+                f"{_markdown(item.requested_cli)} | {_markdown(item.cwd)} | "
+                f"{str(item.dialogue).lower()} | {str(item.tdd).lower()} | "
+                f"{item.allow_path_count} | {item.allow_command_count} | "
+                f"{_markdown(families)} | {item.evidence_path_count} | "
+                f"{item.prompt_chars} | `{item.prompt_sha256}` |"
+            )
+    else:
+        lines.append("No `run_subagent.py` invocation was detected.")
+
+    lines.extend(["", "## MiniMax Activity", ""])
+    if capture.activities:
+        lines.extend(
+            [
+                "| External session | Max elapsed seconds | Event counts |",
+                "|---|---:|---|",
+            ]
+        )
+        for session, events in sorted(capture.activities.items()):
+            event_text = ", ".join(f"{name}={count}" for name, count in sorted(events.items()))
+            lines.append(
+                f"| `{_markdown(session)}` | {capture.max_elapsed.get(session, 0)} | {_markdown(event_text)} |"
+            )
+    else:
+        lines.append("No MiniMax activity heartbeat was detected.")
+
+    lines.extend(["", "## Action Timeline", ""])
+    if capture.activity_timeline:
+        lines.extend(
+            [
+                "| # | External session | Elapsed seconds | Event |",
+                "|---:|---|---:|---|",
+            ]
+        )
+        for index, item in enumerate(capture.activity_timeline, 1):
+            lines.append(
+                f"| {index} | `{_markdown(item.external_session)}` | "
+                f"{item.elapsed_seconds} | {_markdown(item.event)} |"
+            )
+    else:
+        lines.append("No external MiniMax action was detected.")
+
+    lines.extend(["", "## Terminal Truth", ""])
+    if capture.terminals:
+        lines.extend(
+            [
+                "| # | Timestamp | status | transport | CLI | reason | agent_status | Evidence | Concerns | Blocker | Error signature |",
+                "|---:|---|---|---|---|---|---|---:|---:|---|---|",
+            ]
+        )
+        for index, item in enumerate(capture.terminals, 1):
+            lines.append(
+                f"| {index} | {_markdown(item.timestamp)} | {_markdown(item.status)} | "
+                f"{_markdown(item.transport_exit_code)} | {_markdown(item.cli_exit_code)} | "
+                f"{_markdown(item.termination_reason)} | {_markdown(item.agent_status)} | "
+                f"{item.evidence_count} | {item.concern_count} | {_markdown(item.blocker_kind)} | "
+                f"{_markdown(item.error_signature)} |"
+            )
+    else:
+        lines.append("No structured MiniMax terminal result was detected.")
+
+    lines.extend(["", "## Failure Signatures", ""])
+    if capture.failure_counts:
+        for name, count in sorted(capture.failure_counts.items()):
+            lines.append(f"- `{_markdown(name)}`: {count} matching record(s)")
+    else:
+        lines.append("- No known failure marker detected.")
+
+    lines.extend(["", "## Optimization Leads", ""])
+    lines.extend(f"- {lead}" for lead in _optimization_leads(capture))
+    lines.extend(
+        [
+            "",
+            "## Sanitization And Evidence Limits",
+            "",
+            "- Raw prompts and exact commands are omitted; prompt hashes are truncated SHA-256 identifiers.",
+            "- Command grants expose only executable families and counts.",
+            "- Provider result prose, tool payloads, environment values, and credentials are not copied.",
+            "- Invocation and activity records do not prove task correctness.",
+            "- Re-open the source rollout only with narrow, redacted queries for a specific hypothesis.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _default_output(session_id: str, output_root: Path, captured_at: datetime) -> Path:
+    stamp = captured_at.strftime("%Y%m%dT%H%M%SZ")
+    return output_root / f"{session_id}-{stamp}.md"
+
+
+def _write_report(output: Path, content: str, force: bool) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    flags |= os.O_TRUNC if force else os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(output, flags, 0o600)
+    os.fchmod(descriptor, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Capture sanitized MiniMax subagent activity from a Codex rollout."
+    )
+    parser.add_argument("--session-id", default=os.environ.get("CODEX_THREAD_ID"))
+    parser.add_argument("--session-file", type=Path)
+    parser.add_argument("--sessions-root", type=Path, default=DEFAULT_SESSIONS_ROOT)
+    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--force", action="store_true")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv or sys.argv[1:])
+    if not args.session_id:
+        print("error: provide --session-id or set CODEX_THREAD_ID", file=sys.stderr)
+        return 2
+    try:
+        source = args.session_file or _resolve_session(args.session_id, args.sessions_root)
+        if not source.is_file() or source.is_symlink():
+            raise ValueError(f"Session file must be a regular non-symlink file: {source}")
+        captured_at_dt = datetime.now(timezone.utc)
+        capture = capture_session(args.session_id, source)
+        output = args.output or _default_output(
+            args.session_id, args.output_root, captured_at_dt
+        )
+        if output.is_symlink():
+            raise ValueError(f"Output path must not be a symlink: {output}")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _write_report(
+            output,
+            render_markdown(capture, captured_at_dt.isoformat()),
+            force=args.force,
+        )
+    except (OSError, ValueError) as exc:
+        print(f"error: {_redact(str(exc), 400)}", file=sys.stderr)
+        return 1
+    print(output)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
