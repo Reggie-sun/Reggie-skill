@@ -26,6 +26,7 @@ class AgentInvocation:
     allowed_commands: tuple[str, ...] = ()
     allowed_paths: tuple[str, ...] = ()
     structured_output_schema: str | None = None
+    required_evidence_paths: tuple[str, ...] = ()
 
 
 def parse_command_argv(command: str) -> tuple[str, ...]:
@@ -182,6 +183,15 @@ def effort_flags(cli: str, effort: str | None) -> list:
 def _invocation_flags(inv: AgentInvocation) -> list:
     flags = permission_flags(inv.cli, inv.permission)
     claude_family = inv.cli in CLAUDE_FAMILY_CLIS
+    if inv.required_evidence_paths and (
+        not claude_family
+        or inv.permission != "read-only"
+        or inv.structured_output_schema is None
+    ):
+        raise ValueError(
+            "Runner-required evidence paths require a Claude-family read-only "
+            "dialogue invocation."
+        )
     if inv.permission == "safe-edit" and claude_family and not inv.allowed_paths:
         raise ValueError(
             "Claude-family safe-edit requires at least one explicit --allow-path."
@@ -256,6 +266,20 @@ def _concatenated_args(
 
 def _claude_system_prompt(inv: AgentInvocation) -> str:
     sections = [f"cwd: {inv.cwd}", inv.system_context]
+    if inv.required_evidence_paths:
+        evidence_paths = "\n".join(
+            f"- {path}" for path in inv.required_evidence_paths
+        )
+        sections.append(
+            "Runner-enforced evidence coverage (authoritative):\n"
+            f"Required files:\n{evidence_paths}\n"
+            "Use Read or a file-scoped Grep successfully on every required file before "
+            "the final report. Merely naming a file in the report does not satisfy this "
+            "gate. Treat an unresolved concern that could change the architecture, reuse, "
+            "or compatibility conclusion as material: keep the conclusion conditional and "
+            "return DONE_WITH_CONCERNS or NEEDS_CONTEXT. The summary, result, and concerns "
+            "must not contradict one another."
+        )
     if inv.permission == "safe-edit":
         writable_paths = "\n".join(f"- {path}" for path in inv.allowed_paths)
         if inv.allowed_commands:

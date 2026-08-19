@@ -49,6 +49,8 @@ def _drive_test_process(
     fail_fast_tool_errors: bool = True,
     allow_dialogue_fallback: bool = False,
     allow_structured_output: bool = False,
+    cwd: str = "/tmp",
+    required_evidence_paths: tuple[str, ...] = (),
 ) -> dict:
     process = _python_process(source)
     try:
@@ -63,6 +65,8 @@ def _drive_test_process(
             fail_fast_tool_errors=fail_fast_tool_errors,
             allow_dialogue_fallback=allow_dialogue_fallback,
             allow_structured_output=allow_structured_output,
+            cwd=cwd,
+            required_evidence_paths=required_evidence_paths,
         )
     finally:
         if process.poll() is None:
@@ -169,6 +173,258 @@ print(json.dumps({"type": "result", "result": "DONE", "session_id": "session-act
         self.assertEqual(result["result"], "DONE")
         self.assertIn("event=assistant", progress.getvalue())
         self.assertNotIn("step 0", progress.getvalue())
+
+
+    def test_missing_required_evidence_fails_closed_after_model_success(self) -> None:
+        structured_output = {
+            "status": "DONE_WITH_CONCERNS",
+            "summary": "No lifecycle change required",
+            "result": "The service can be reused unchanged.",
+            "questions": [],
+            "state_file": None,
+            "concerns": ["Validator semantics need a deeper read."],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "owner.py").write_text("OWNER = True\n", encoding="utf-8")
+            (root / "validator.py").write_text("VALID = True\n", encoding="utf-8")
+            events = [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "read-owner",
+                                "name": "Read",
+                                "input": {"file_path": str(root / "owner.py")},
+                            }
+                        ]
+                    },
+                },
+                _tool_result("read-owner"),
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "structured_output": structured_output,
+                },
+            ]
+
+            result = _drive_test_process(
+                _event_source(events),
+                io.StringIO(),
+                timeout_ms=1_000,
+                allow_structured_output=True,
+                cwd=temp_dir,
+                required_evidence_paths=("owner.py", "validator.py"),
+            )
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(result["agent_status"], "BLOCKED")
+        self.assertEqual(result["termination_reason"], "evidence_incomplete")
+        self.assertEqual(result["observed_evidence_paths"], ["owner.py"])
+        self.assertEqual(result["blocker"]["missing_paths"], ["validator.py"])
+        self.assertEqual(result["result"], "")
+        self.assertEqual(result["summary"], "Required evidence incomplete")
+        self.assertNotIn("structured_output", result)
+
+    def test_successful_read_and_file_scoped_grep_satisfy_evidence_gate(self) -> None:
+        structured_output = {
+            "status": "DONE",
+            "summary": "Mapped both owners",
+            "result": "Both lifecycle owners were inspected.",
+            "questions": [],
+            "state_file": None,
+            "concerns": [],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "owner.py").write_text("OWNER = True\n", encoding="utf-8")
+            (root / "validator.py").write_text("VALID = True\n", encoding="utf-8")
+            events = [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "read-owner",
+                                "name": "Read",
+                                "input": {"file_path": "owner.py"},
+                            },
+                            {
+                                "type": "tool_use",
+                                "id": "grep-validator",
+                                "name": "Grep",
+                                "input": {
+                                    "pattern": "validate",
+                                    "path": "validator.py",
+                                },
+                            },
+                        ]
+                    },
+                },
+                _tool_result("read-owner"),
+                _tool_result("grep-validator"),
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "structured_output": structured_output,
+                },
+            ]
+
+            result = _drive_test_process(
+                _event_source(events),
+                io.StringIO(),
+                timeout_ms=1_000,
+                allow_structured_output=True,
+                cwd=temp_dir,
+                required_evidence_paths=("owner.py", "validator.py"),
+            )
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(
+            result["observed_evidence_paths"],
+            ["owner.py", "validator.py"],
+        )
+
+    def test_failed_read_does_not_satisfy_evidence_gate(self) -> None:
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "read-owner",
+                            "name": "Read",
+                            "input": {"file_path": "owner.py"},
+                        }
+                    ]
+                },
+            },
+            _tool_result("read-owner", is_error=True),
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "structured_output": {
+                    "status": "DONE",
+                    "summary": "Mapped owner",
+                    "result": "Owner inspected.",
+                    "questions": [],
+                    "state_file": None,
+                    "concerns": [],
+                },
+            },
+        ]
+
+        result = _drive_test_process(
+            _event_source(events),
+            io.StringIO(),
+            timeout_ms=1_000,
+            allow_structured_output=True,
+            fail_fast_tool_errors=False,
+            cwd="/tmp/project",
+            required_evidence_paths=("owner.py",),
+        )
+
+        self.assertEqual(result["termination_reason"], "evidence_incomplete")
+        self.assertEqual(result["observed_evidence_paths"], [])
+
+    def test_directory_scoped_grep_does_not_satisfy_file_evidence_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "owner.py").mkdir()
+            events = [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "grep-owner",
+                                "name": "Grep",
+                                "input": {"pattern": "owner", "path": "owner.py"},
+                            }
+                        ]
+                    },
+                },
+                _tool_result("grep-owner"),
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "structured_output": {
+                        "status": "DONE",
+                        "summary": "Mapped owner",
+                        "result": "Owner inspected.",
+                        "questions": [],
+                        "state_file": None,
+                        "concerns": [],
+                    },
+                },
+            ]
+
+            result = _drive_test_process(
+                _event_source(events),
+                io.StringIO(),
+                timeout_ms=1_000,
+                allow_structured_output=True,
+                cwd=temp_dir,
+                required_evidence_paths=("owner.py",),
+            )
+
+        self.assertEqual(result["termination_reason"], "evidence_incomplete")
+        self.assertEqual(result["observed_evidence_paths"], [])
+
+    def test_symlinked_read_does_not_satisfy_file_evidence_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "actual.py").write_text("OWNER = True\n", encoding="utf-8")
+            (root / "owner.py").symlink_to(root / "actual.py")
+            events = [
+                {
+                    "type": "assistant",
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "read-owner",
+                                "name": "Read",
+                                "input": {"file_path": "owner.py"},
+                            }
+                        ]
+                    },
+                },
+                _tool_result("read-owner"),
+                {
+                    "type": "result",
+                    "subtype": "success",
+                    "is_error": False,
+                    "structured_output": {
+                        "status": "DONE",
+                        "summary": "Mapped owner",
+                        "result": "Owner inspected.",
+                        "questions": [],
+                        "state_file": None,
+                        "concerns": [],
+                    },
+                },
+            ]
+
+            result = _drive_test_process(
+                _event_source(events),
+                io.StringIO(),
+                timeout_ms=1_000,
+                allow_structured_output=True,
+                cwd=temp_dir,
+                required_evidence_paths=("owner.py",),
+            )
+
+        self.assertEqual(result["termination_reason"], "evidence_incomplete")
+        self.assertEqual(result["observed_evidence_paths"], [])
 
     def test_idle_timeout_returns_partial_text_and_session_id(self) -> None:
         source = """

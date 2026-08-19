@@ -61,6 +61,8 @@ Rules:
 - `DONE_WITH_CONCERNS` requires at least one concern.
 - `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
 - `questions` must be empty unless status is `NEEDS_CONTEXT`.
+- The summary, result, and concerns must agree. A material unresolved concern
+  must remain qualified in the conclusion; do not present it as confirmed.
 - `state_file` must be `null` unless useful state was written; a non-null value
   must name an existing regular file inside the working directory.
 - Do not include a second envelope or any content after the closing tag.
@@ -80,6 +82,8 @@ Rules:
 - `DONE_WITH_CONCERNS` requires at least one concern.
 - `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
 - `questions` must be empty unless status is `NEEDS_CONTEXT`.
+- The summary, result, and concerns must agree. A material unresolved concern
+  must remain qualified in the conclusion; do not present it as confirmed.
 - `state_file` must be `null` unless useful state was written; a non-null value
   must name an existing regular file inside the working directory.
 """
@@ -283,9 +287,11 @@ def _normalize_dialogue_payload(
         if state_value is not None:
             if not isinstance(state_value, str) or not state_value.strip():
                 raise ValueError("state_file must be null or a non-empty path string.")
-            _, state_file = _resolve_regular_file(
-                state_value.strip(), cwd, "State file"
-            )
+            normalized_state_value = state_value.strip()
+            if normalized_state_value.lower() != "null":
+                _, state_file = _resolve_regular_file(
+                    normalized_state_value, cwd, "State file"
+                )
     except ValueError as exc:
         return _protocol_error(result, str(exc))
 

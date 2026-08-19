@@ -19,6 +19,25 @@ from _builder import (  # noqa: E402
 
 
 class MiniMaxEffortTests(unittest.TestCase):
+    def test_agent_invocation_preserves_legacy_positional_schema_argument(self) -> None:
+        schema = '{"type":"object"}'
+        invocation = AgentInvocation(
+            "minimax",
+            "inspect",
+            "/tmp",
+            "context",
+            None,
+            "read-only",
+            None,
+            None,
+            (),
+            (),
+            schema,
+        )
+
+        self.assertEqual(invocation.structured_output_schema, schema)
+        self.assertEqual(invocation.required_evidence_paths, ())
+
     def test_minimax_structured_output_schema_is_enforced_by_claude_transport(self) -> None:
         schema = '{"type":"object","required":["status","result"]}'
         invocation = AgentInvocation(
@@ -299,6 +318,58 @@ class ClaudeFamilyReadOnlyTests(unittest.TestCase):
         self.assertEqual(args[args.index("--mcp-config") + 1], '{"mcpServers":{}}')
         self.assertIn("--strict-mcp-config", args)
         self.assertIn("mcp__*", args[args.index("--disallowedTools") + 1].split(","))
+
+    def test_minimax_explorer_receives_required_evidence_contract(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="map lifecycle",
+            cwd="/tmp/project",
+            permission="read-only",
+            required_evidence_paths=("owner.py", "schema/validator.py"),
+            structured_output_schema='{"type":"object"}',
+        )
+
+        with patch.dict(os.environ, {"MINIMAX_API_KEY": "test-key"}):
+            _, args, _ = build_invocation_args(invocation)
+
+        system_prompt = args[args.index("--system-prompt") + 1]
+        self.assertIn("Runner-enforced evidence coverage", system_prompt)
+        self.assertIn("- owner.py", system_prompt)
+        self.assertIn("- schema/validator.py", system_prompt)
+        self.assertIn("unresolved concern", system_prompt)
+
+    def test_required_evidence_rejects_non_read_only_non_claude_or_non_dialogue(self) -> None:
+        cases = (
+            AgentInvocation(
+                cli="minimax",
+                prompt="inspect",
+                cwd="/tmp/project",
+                permission="safe-edit",
+                allowed_paths=("owner.py",),
+                required_evidence_paths=("owner.py",),
+                structured_output_schema='{"type":"object"}',
+            ),
+            AgentInvocation(
+                cli="codex",
+                prompt="inspect",
+                cwd="/tmp/project",
+                permission="read-only",
+                required_evidence_paths=("owner.py",),
+                structured_output_schema='{"type":"object"}',
+            ),
+            AgentInvocation(
+                cli="minimax",
+                prompt="inspect",
+                cwd="/tmp/project",
+                permission="read-only",
+                required_evidence_paths=("owner.py",),
+            ),
+        )
+
+        for invocation in cases:
+            with self.subTest(invocation=invocation):
+                with self.assertRaisesRegex(ValueError, "required evidence"):
+                    build_invocation_args(invocation)
 
 
 if __name__ == "__main__":

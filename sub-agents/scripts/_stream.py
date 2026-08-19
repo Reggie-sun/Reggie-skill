@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 
 from _builder import parse_command_argv
 
@@ -131,6 +132,8 @@ class StreamProcessor:
         allowed_commands: tuple[str, ...] = (),
         count_tool_requests_as_progress: bool = False,
         allow_structured_output: bool = False,
+        cwd: str = "/",
+        required_evidence_paths: tuple[str, ...] = (),
     ):
         self.cli = cli
         try:
@@ -152,6 +155,11 @@ class StreamProcessor:
         self.allowed_commands = allowed_commands
         self.count_tool_requests_as_progress = count_tool_requests_as_progress
         self.allow_structured_output = allow_structured_output
+        self._cwd = Path(cwd).resolve()
+        self._required_evidence_paths = tuple(required_evidence_paths)
+        self._required_evidence_set = set(required_evidence_paths)
+        self._tool_evidence_paths: dict[str, str] = {}
+        self._observed_evidence_paths: set[str] = set()
         self._allowed_command_argv = tuple(
             (command, parse_command_argv(command)) for command in allowed_commands
         )
@@ -272,6 +280,26 @@ class StreamProcessor:
             self._last_error_tool = None
             self._last_error_command_family = None
             self._equivalent_error_count = 0
+        if isinstance(tool_use_id, str):
+            evidence_path = self._tool_evidence_paths.get(tool_use_id)
+            if evidence_path is not None:
+                self._observed_evidence_paths.add(evidence_path)
+
+    def _normalize_observed_evidence_path(self, value: object) -> str | None:
+        if not isinstance(value, str) or not value.strip():
+            return None
+        supplied = Path(value)
+        candidate = supplied if supplied.is_absolute() else self._cwd / supplied
+        try:
+            resolved = candidate.resolve()
+            if not resolved.is_relative_to(self._cwd):
+                return None
+            if not resolved.is_file():
+                return None
+            relative = resolved.relative_to(self._cwd).as_posix()
+        except (OSError, ValueError):
+            return None
+        return relative if relative in self._required_evidence_set else None
 
     def _mark_semantic_progress(self, item: dict) -> None:
         semantic_item = {
@@ -321,6 +349,17 @@ class StreamProcessor:
                 tool_id = item.get("id") or item.get("tool_use_id")
                 if isinstance(tool_id, str) and isinstance(name, str):
                     self._tool_names[tool_id] = name
+                if isinstance(tool_id, str) and isinstance(tool_input, dict):
+                    evidence_value = None
+                    if name == "Read":
+                        evidence_value = tool_input.get("file_path")
+                    elif name == "Grep":
+                        evidence_value = tool_input.get("path")
+                    evidence_path = self._normalize_observed_evidence_path(
+                        evidence_value
+                    )
+                    if evidence_path is not None:
+                        self._tool_evidence_paths[tool_id] = evidence_path
                 if self.allow_structured_output and name == "StructuredOutput":
                     self._latest_structured_tool_id = None
                     self._confirmed_structured_output = None
@@ -559,6 +598,13 @@ class StreamProcessor:
 
     def get_tool_error_loop(self) -> dict | None:
         return self._tool_error_loop
+
+    def get_observed_evidence_paths(self) -> tuple[str, ...]:
+        return tuple(
+            path
+            for path in self._required_evidence_paths
+            if path in self._observed_evidence_paths
+        )
 
 
 _LINE_PROCESSORS = {

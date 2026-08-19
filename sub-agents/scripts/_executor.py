@@ -332,6 +332,8 @@ def _drive_process(
     fail_fast_tool_errors: bool = False,
     allow_dialogue_fallback: bool = False,
     allow_structured_output: bool = False,
+    cwd: str = "/",
+    required_evidence_paths: tuple[str, ...] = (),
 ) -> dict:
     if progress_stream is None:
         progress_stream = sys.stderr
@@ -351,6 +353,8 @@ def _drive_process(
         allowed_commands=allowed_commands,
         count_tool_requests_as_progress=not fail_fast_tool_errors,
         allow_structured_output=allow_structured_output,
+        cwd=cwd,
+        required_evidence_paths=required_evidence_paths,
     )
     stdout_lines: list = []
     accumulated_chars = 0
@@ -464,7 +468,7 @@ def _drive_process(
             processor.promote_clean_exit_dialogue_result()
             result = processor.get_result()
 
-        return build_final_response(
+        response = build_final_response(
             cli,
             process.returncode,
             result,
@@ -472,6 +476,39 @@ def _drive_process(
             stderr,
             terminated_by_us=terminated_by_us,
         )
+        if required_evidence_paths:
+            observed = list(processor.get_observed_evidence_paths())
+            response["observed_evidence_paths"] = observed
+            if response.get("status") == "success":
+                missing = [
+                    path
+                    for path in required_evidence_paths
+                    if path not in observed
+                ]
+                if missing:
+                    response.pop("structured_output", None)
+                    response.update(
+                        {
+                            "status": "error",
+                            "result": "",
+                            "summary": "Required evidence incomplete",
+                            "exit_code": 1,
+                            "transport_exit_code": 1,
+                            "agent_status": "BLOCKED",
+                            "termination_reason": "evidence_incomplete",
+                            "error": (
+                                "Required evidence files were not successfully read: "
+                                + ", ".join(missing)
+                            ),
+                            "blocker": {
+                                "kind": "missing_required_evidence",
+                                "required_paths": list(required_evidence_paths),
+                                "observed_paths": observed,
+                                "missing_paths": missing,
+                            },
+                        }
+                    )
+        return response
     except (OSError, ValueError) as e:
         _signal_process_group(process, signal.SIGKILL)
         # Reap before callers clean up per-run resources.
@@ -513,6 +550,7 @@ def _spawn_and_drive(
     fail_fast_tool_errors: bool = False,
     allow_dialogue_fallback: bool = False,
     allow_structured_output: bool = False,
+    required_evidence_paths: tuple[str, ...] = (),
 ) -> dict:
     try:
         # Prevent CLIs from waiting for interactive input.
@@ -552,6 +590,8 @@ def _spawn_and_drive(
         fail_fast_tool_errors=fail_fast_tool_errors,
         allow_dialogue_fallback=allow_dialogue_fallback,
         allow_structured_output=allow_structured_output,
+        cwd=cwd,
+        required_evidence_paths=required_evidence_paths,
     )
 
 
@@ -610,4 +650,5 @@ def execute_agent(
         fail_fast_tool_errors=inv.permission == "safe-edit",
         allow_dialogue_fallback=allow_dialogue_fallback,
         allow_structured_output=inv.structured_output_schema is not None,
+        required_evidence_paths=inv.required_evidence_paths,
     )

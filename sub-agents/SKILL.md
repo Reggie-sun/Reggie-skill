@@ -15,6 +15,7 @@ Workflow: discover available definitions, select one from the user request, exec
 - **[run_subagent.py](scripts/run_subagent.py)** - Main execution script
 - **[codex.md](references/codex.md)** - Read before first execution from Codex; covers permissions and timeout
 - **[minimax-writer-session-diagnostics.md](references/minimax-writer-session-diagnostics.md)** - Read when MiniMax dispatch repeatedly blocks, retries without progress, invents shell commands, or produces useful edits without a clean terminal result
+- **[minimax-explorer-evidence-diagnostics.md](references/minimax-explorer-evidence-diagnostics.md)** - Read when a MiniMax explorer returns a confident architecture or compatibility conclusion without inspecting every required owner, schema, validator, and recovery surface
 
 **Script Path**: Invoke `python3 {SKILL_DIR}/scripts/run_subagent.py` using the absolute skill path, where `{SKILL_DIR}` is the directory containing this SKILL.md file. Using the interpreter explicitly remains reliable if an installer fails to preserve the executable bit.
 
@@ -46,6 +47,7 @@ Extract parameters from user's natural language request:
 | `--parent-answer-file` | Validated prior-turn answer artifact inside `--cwd`; repeat as needed and use only with `--dialogue` |
 | `--tdd` | Inject the strict RED-GREEN-REFACTOR contract for a `safe-edit` writer |
 | `--tdd-command` | The one exact command that must prove RED then GREEN; supply exactly once and grant identically with `--allow-command` |
+| `--require-evidence-path` | Existing regular file inside `--cwd` that a Claude-family read-only dialogue agent must successfully inspect; repeat for mandatory owners/validators |
 
 **Example**:
 "Run code-reviewer on src/"
@@ -65,6 +67,15 @@ verification command is known. An explorer finding an unresolved capability,
 missing sealed workflow/profile, or architecture decision is a stop signal for
 implementation, not an invitation to let the writer guess. Resolve the gate or
 keep the task in design/exploration.
+
+For an explorer asked to make architecture, reuse-as-is, no-schema-change, or
+compatibility conclusions, identify the known authority owners before dispatch
+and pass each one as `--require-evidence-path`. Include the service/call path,
+durable state schema or validator, and writer/recovery owner when those surfaces
+affect the conclusion. If the owner files are not yet known, make the first run
+discovery-only; do not accept a definitive architecture conclusion from that
+run. A report cannot promote a material unresolved concern into an unconditional
+summary.
 
 This skill implements external delegation; it does not decide whether a task
 must be delegated. When a higher-priority rule routes a bounded writer through
@@ -188,6 +199,12 @@ agent returns `NEEDS_CONTEXT`, write the answer to a UTF-8 artifact inside
 `--cwd` and fresh-dispatch the same task with
 `--dialogue --parent-answer-file <relative path>`. The answer artifact is
 context only: never add it to `--allow-path`, and never place credentials in it.
+For broad read-only mapping, append one
+`--require-evidence-path <relative-file>` per known authority owner. This flag
+requires a Claude-family read-only `--dialogue` invocation. Paths must be
+existing regular non-symlink files inside `--cwd`. The runner counts only a
+successful `Read` or file-scoped `Grep` of that exact file; mentioning it in the
+report, globbing its directory, or a failed tool call does not satisfy the gate.
 
 ### Step 4: Handle Response
 
@@ -248,6 +265,12 @@ means that the task completed:
 | `NEEDS_CONTEXT` | Answer its 1-3 questions in an artifact and fresh-dispatch with the same scope and permissions |
 | `BLOCKED` | Assess the blocker; do not repeat the unchanged dispatch |
 | `PROTOCOL_ERROR` | Correct the prompt/protocol once; do not infer completion from prose |
+
+When mandatory evidence is missing, the runner overrides an otherwise
+successful model result with `status=error`, `agent_status=BLOCKED`,
+`termination_reason=evidence_incomplete`, and a structured blocker containing
+required, observed, and missing paths. Fix the evidence scope or run a
+discovery-only task; do not accept the model's architecture conclusion.
 
 For `safe-edit`, the first permission denial terminates the child because a
 fresh non-interactive invocation cannot change its grants. Three equivalent

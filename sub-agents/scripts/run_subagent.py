@@ -17,6 +17,7 @@ from _dialogue import (  # noqa: E402
     dialogue_json_schema,
     normalize_dialogue_result,
 )
+from _evidence import normalize_required_evidence_paths  # noqa: E402
 from _executor import execute_agent  # noqa: E402
 from _loader import (  # noqa: E402
     discover_agents,
@@ -113,6 +114,15 @@ def main() -> None:
             "must also appear as --allow-command, and must be supplied exactly once"
         ),
     )
+    parser.add_argument(
+        "--require-evidence-path",
+        action="append",
+        default=[],
+        help=(
+            "Existing regular file inside --cwd that a Claude-family read-only "
+            "dialogue agent must successfully inspect; repeat for multiple owners"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -168,6 +178,26 @@ def main() -> None:
     if args.parent_answer_file and not args.dialogue:
         _print_error("--parent-answer-file requires --dialogue.", cli=cli)
         sys.exit(1)
+    if args.require_evidence_path:
+        if not args.dialogue:
+            _print_error("--require-evidence-path requires --dialogue.", cli=cli)
+            sys.exit(1)
+        if permission != "read-only" or cli not in CLAUDE_FAMILY_CLIS:
+            _print_error(
+                "--require-evidence-path requires a Claude-family read-only agent.",
+                cli=cli,
+            )
+            sys.exit(1)
+        try:
+            required_evidence_paths = normalize_required_evidence_paths(
+                args.cwd,
+                args.require_evidence_path,
+            )
+        except ValueError as e:
+            _print_error(str(e), cli=cli)
+            sys.exit(1)
+    else:
+        required_evidence_paths = ()
     if args.tdd_command and not args.tdd:
         _print_error("--tdd-command requires --tdd.", cli=cli)
         sys.exit(1)
@@ -221,6 +251,7 @@ def main() -> None:
         effort=effort,
         allowed_commands=tuple(args.allow_command),
         allowed_paths=tuple(args.allow_path),
+        required_evidence_paths=required_evidence_paths,
         structured_output_schema=(
             dialogue_json_schema() if structured_dialogue else None
         ),

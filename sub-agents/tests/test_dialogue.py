@@ -122,6 +122,18 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["agent_status"], "DONE")
         self.assertEqual(normalized["result"], "Implemented and tested")
 
+    def test_string_null_state_file_is_normalized_to_none(self) -> None:
+        result = _transport_result(
+            '<subagent_result>{"status":"DONE","summary":"Implemented and tested",'
+            '"questions":[],"state_file":" null ","concerns":[]}</subagent_result>'
+        )
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "success")
+        self.assertEqual(normalized["agent_status"], "DONE")
+        self.assertIsNone(normalized["state_file"])
+
     def test_missing_envelope_fails_closed(self) -> None:
         normalized = normalize_dialogue_result(
             _transport_result("Looks done to me."),
@@ -315,6 +327,104 @@ class DialogueContextTests(unittest.TestCase):
 
 
 class DialogueCliTests(unittest.TestCase):
+    def test_required_evidence_paths_are_normalized_for_read_only_dialogue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agents_dir = Path(temp_dir) / "agents"
+            agents_dir.mkdir()
+            (agents_dir / "explorer.md").write_text(
+                """---
+run-agent: minimax
+permission: read-only
+---
+
+# Explorer
+""",
+                encoding="utf-8",
+            )
+            (Path(temp_dir) / "owner.py").write_text("OWNER = True\n", encoding="utf-8")
+            argv = [
+                "run_subagent.py",
+                "--agent",
+                "explorer",
+                "--agents-dir",
+                str(agents_dir),
+                "--cwd",
+                temp_dir,
+                "--prompt",
+                "Map the lifecycle",
+                "--dialogue",
+                "--require-evidence-path",
+                "owner.py",
+            ]
+            terminal = {
+                **_transport_result(""),
+                "structured_output": {
+                    "status": "DONE",
+                    "summary": "Mapped",
+                    "result": "Mapped owner.",
+                    "questions": [],
+                    "state_file": None,
+                    "concerns": [],
+                },
+            }
+            stdout = StringIO()
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch("run_subagent.resolve_cli", return_value="minimax"),
+                patch("run_subagent.execute_agent", return_value=terminal) as execute,
+                redirect_stdout(stdout),
+                self.assertRaises(SystemExit) as exited,
+            ):
+                main()
+
+        self.assertEqual(exited.exception.code, 0)
+        self.assertEqual(
+            execute.call_args.args[0].required_evidence_paths,
+            ("owner.py",),
+        )
+
+    def test_required_evidence_path_requires_dialogue(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            agents_dir = Path(temp_dir) / "agents"
+            agents_dir.mkdir()
+            (agents_dir / "explorer.md").write_text(
+                """---
+run-agent: minimax
+permission: read-only
+---
+
+# Explorer
+""",
+                encoding="utf-8",
+            )
+            (Path(temp_dir) / "owner.py").write_text("OWNER = True\n", encoding="utf-8")
+            argv = [
+                "run_subagent.py",
+                "--agent",
+                "explorer",
+                "--agents-dir",
+                str(agents_dir),
+                "--cwd",
+                temp_dir,
+                "--prompt",
+                "Map the lifecycle",
+                "--require-evidence-path",
+                "owner.py",
+            ]
+            stdout = StringIO()
+
+            with (
+                patch.object(sys, "argv", argv),
+                patch("run_subagent.resolve_cli", return_value="minimax"),
+                redirect_stdout(stdout),
+                self.assertRaises(SystemExit) as exited,
+            ):
+                main()
+
+        self.assertEqual(exited.exception.code, 1)
+        self.assertIn("requires --dialogue", stdout.getvalue())
+
     def test_dialogue_cli_injects_parent_answer_and_exposes_agent_status(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             agents_dir = Path(temp_dir) / "agents"

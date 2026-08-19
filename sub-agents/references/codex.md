@@ -95,6 +95,14 @@ fresh-dispatch the same task with `--parent-answer-file`. This is turn-based
 artifact exchange, not live stdin. The artifact cannot grant tools, paths, or
 commands and must not contain credentials.
 
+For read-only architecture conclusions, use repeated
+`--require-evidence-path` flags for the known service, schema/validator, and
+writer/recovery owners. The runner verifies successful exact-file `Read` or
+file-scoped `Grep` tool results. Missing coverage terminates as
+`evidence_incomplete`; a model-provided `DONE` or `DONE_WITH_CONCERNS` cannot
+override it. Discovery-only runs may omit this gate, but their unresolved owner
+surface must not be treated as a definitive reuse or no-schema-change decision.
+
 ## Sub-Agent Execution
 
 When running a sub-agent, operate as a broker: carry one run from start to terminal state.
