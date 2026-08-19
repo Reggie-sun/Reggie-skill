@@ -65,6 +65,15 @@ def _write_rollout(path: Path, session_id: str) -> None:
                             "agent_status": "BLOCKED",
                             "observed_evidence_paths": [],
                             "concerns": [],
+                            "concern_categories": ["permission_or_tooling"],
+                            "evidence_categories": ["files_inspected"],
+                            "runner_context": {
+                                "model": "MiniMax-M3",
+                                "effort": "high",
+                                "permission": "read-only",
+                                "tools_mode": "explicit",
+                                "tools": ["Read", "Glob", "Grep", "StructuredOutput"],
+                            },
                             "error": (
                                 "Permission denied: env PRIVATE_VALUE=hunter2 curl "
                                 "https://example.test -H 'Authorization: ghp_abcdefghijklmnop' "
@@ -178,6 +187,19 @@ class CaptureSessionTests(unittest.TestCase):
             report = MODULE.render_markdown(capture, "2026-08-19T00:03:00Z")
 
         self.assertEqual(len(capture.invocations), 1)
+        self.assertEqual(capture.terminals[0].resolved_model, "MiniMax-M3")
+        self.assertEqual(capture.terminals[0].resolved_effort, "high")
+        self.assertEqual(
+            capture.terminals[0].resolved_tools,
+            ("Read", "Glob", "Grep", "StructuredOutput"),
+        )
+        self.assertEqual(capture.terminals[0].resolved_tools_mode, "explicit")
+        self.assertEqual(
+            capture.terminals[0].concern_categories,
+            ("permission_or_tooling",),
+        )
+        self.assertIn("MiniMax-M3", report)
+        self.assertIn("permission_or_tooling", report)
         self.assertEqual(capture.invocations[0].agent, "explorer")
         self.assertEqual(capture.invocations[0].allow_command_count, 1)
         self.assertEqual(capture.invocations[0].command_families, ("pytest",))
@@ -195,6 +217,67 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertNotIn("ghp_abcdefghijklmnop", report)
         self.assertIn("evidence_incomplete", report)
         self.assertIn("missing_required_evidence", report)
+
+    def test_terminal_rejects_arbitrary_model_and_distinguishes_unknown_tools(self) -> None:
+        terminal = MODULE._terminal_from_dict(
+            "t0",
+            {
+                "cli": "minimax",
+                "status": "success",
+                "exit_code": 0,
+                "transport_exit_code": 0,
+                "cli_exit_code": 0,
+                "termination_reason": "cli_exit",
+                "agent_status": "DONE",
+                "runner_context": {
+                    "model": "arbitrary historical prose PRIVATE_VALUE=hunter2",
+                    "effort": "high",
+                    "permission": "read-only",
+                },
+            },
+        )
+
+        self.assertIsNotNone(terminal)
+        assert terminal is not None
+        self.assertEqual(terminal.resolved_model, "other")
+        self.assertEqual(terminal.resolved_tools_mode, "unknown")
+        report = MODULE.render_markdown(
+            MODULE.Capture("session-12345678", Path("rollout.jsonl"), terminals=[terminal]),
+            "now",
+        )
+        self.assertIn("unknown", report)
+        self.assertNotIn("arbitrary historical prose", report)
+        self.assertNotIn("hunter2", report)
+
+        default_terminal = MODULE._terminal_from_dict(
+            "t1",
+            {
+                "cli": "minimax",
+                "status": "success",
+                "exit_code": 0,
+                "transport_exit_code": 0,
+                "cli_exit_code": 0,
+                "termination_reason": "cli_exit",
+                "runner_context": {
+                    "model": "MiniMax-M3",
+                    "effort": "high",
+                    "permission": "yolo",
+                    "tools_mode": "default",
+                    "tools": [],
+                },
+            },
+        )
+        self.assertIsNotNone(default_terminal)
+        assert default_terminal is not None
+        default_report = MODULE.render_markdown(
+            MODULE.Capture(
+                "session-12345678",
+                Path("rollout.jsonl"),
+                terminals=[default_terminal],
+            ),
+            "now",
+        )
+        self.assertIn("| yolo | default |", default_report)
 
     def test_terminal_is_recovered_from_nested_exec_output_json(self) -> None:
         terminal = {

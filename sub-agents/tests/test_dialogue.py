@@ -41,6 +41,8 @@ class DialogueResultTests(unittest.TestCase):
                 "questions": [],
                 "state_file": None,
                 "concerns": ["Parent verification required"],
+                "concern_categories": ["evidence_gap"],
+                "evidence_categories": ["files_inspected", "symbols_traced"],
             },
             "exit_code": 0,
             "status": "success",
@@ -54,8 +56,58 @@ class DialogueResultTests(unittest.TestCase):
         self.assertEqual(normalized["result"], "Detailed read-only findings.")
         self.assertEqual(normalized["summary"], "Mapped the lifecycle")
         self.assertEqual(normalized["concerns"], ["Parent verification required"])
+        self.assertEqual(normalized["concern_categories"], ["evidence_gap"])
+        self.assertEqual(
+            normalized["evidence_categories"],
+            ["files_inspected", "symbols_traced"],
+        )
         self.assertEqual(normalized["terminal_protocol"], "structured_output")
         self.assertNotIn("structured_output", normalized)
+
+    def test_legacy_dialogue_payload_defaults_structured_categories(self) -> None:
+        result = {
+            "result": "",
+            "structured_output": {
+                "status": "DONE",
+                "summary": "Mapped",
+                "result": "Detailed findings.",
+                "questions": [],
+                "state_file": None,
+                "concerns": [],
+            },
+            "exit_code": 0,
+            "status": "success",
+            "cli": "minimax",
+        }
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["concern_categories"], [])
+        self.assertEqual(normalized["evidence_categories"], [])
+
+    def test_unknown_diagnostic_category_fails_closed(self) -> None:
+        result = {
+            "result": "",
+            "structured_output": {
+                "status": "DONE_WITH_CONCERNS",
+                "summary": "Mapped",
+                "result": "Detailed findings.",
+                "questions": [],
+                "state_file": None,
+                "concerns": ["Unknown risk"],
+                "concern_categories": ["made_up_category"],
+                "evidence_categories": ["files_inspected"],
+            },
+            "exit_code": 0,
+            "status": "success",
+            "cli": "minimax",
+        }
+
+        normalized = normalize_dialogue_result(result, "/tmp")
+
+        self.assertEqual(normalized["status"], "error")
+        self.assertEqual(normalized["agent_status"], "PROTOCOL_ERROR")
+        self.assertIn("concern_categories", normalized["error"])
 
     def test_structured_output_contradictions_and_shape_fail_closed(self) -> None:
         valid = {

@@ -14,8 +14,32 @@ _ENVELOPE_PATTERN = re.compile(
     r"<subagent_result>\s*(.*?)\s*</subagent_result>",
     re.DOTALL,
 )
-_DIALOGUE_FIELDS = frozenset(
+_DIALOGUE_REQUIRED_FIELDS = frozenset(
     {"status", "summary", "result", "questions", "state_file", "concerns"}
+)
+_DIALOGUE_OPTIONAL_FIELDS = frozenset(
+    {"concern_categories", "evidence_categories"}
+)
+_DIALOGUE_FIELDS = _DIALOGUE_REQUIRED_FIELDS | _DIALOGUE_OPTIONAL_FIELDS
+_CONCERN_CATEGORIES = frozenset(
+    {
+        "architecture_uncertainty",
+        "compatibility_risk",
+        "evidence_gap",
+        "permission_or_tooling",
+        "protocol_or_output",
+        "test_gap",
+        "timeout_or_performance",
+    }
+)
+_EVIDENCE_CATEGORIES = frozenset(
+    {
+        "commands_run",
+        "files_inspected",
+        "runtime_observed",
+        "symbols_traced",
+        "tests_inspected",
+    }
 )
 _DIALOGUE_OUTPUT_SCHEMA = {
     "type": "object",
@@ -39,8 +63,18 @@ _DIALOGUE_OUTPUT_SCHEMA = {
             "type": "array",
             "items": {"type": "string", "minLength": 1},
         },
+        "concern_categories": {
+            "type": "array",
+            "items": {"type": "string", "enum": sorted(_CONCERN_CATEGORIES)},
+            "uniqueItems": True,
+        },
+        "evidence_categories": {
+            "type": "array",
+            "items": {"type": "string", "enum": sorted(_EVIDENCE_CATEGORIES)},
+            "uniqueItems": True,
+        },
     },
-    "required": sorted(_DIALOGUE_FIELDS),
+    "required": sorted(_DIALOGUE_REQUIRED_FIELDS),
 }
 
 _PROTOCOL_CONTEXT = """## Bounded Dialogue Protocol
@@ -54,13 +88,15 @@ an artifact and start a fresh invocation with the same task and current state.
 End every final response with exactly one JSON envelope after any concise
 human-readable report:
 
-<subagent_result>{"status":"DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED","summary":"one-line outcome","questions":[],"state_file":null,"concerns":[]}</subagent_result>
+<subagent_result>{"status":"DONE|DONE_WITH_CONCERNS|NEEDS_CONTEXT|BLOCKED","summary":"one-line outcome","questions":[],"state_file":null,"concerns":[],"concern_categories":[],"evidence_categories":[]}</subagent_result>
 
 Rules:
 - `NEEDS_CONTEXT` requires one to three non-empty questions.
 - `DONE_WITH_CONCERNS` requires at least one concern.
 - `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
 - `questions` must be empty unless status is `NEEDS_CONTEXT`.
+- Use only the supplied enum values in `concern_categories` and
+  `evidence_categories`; omit them only for legacy compatibility.
 - The summary, result, and concerns must agree. A material unresolved concern
   must remain qualified in the conclusion; do not present it as confirmed.
 - `state_file` must be `null` unless useful state was written; a non-null value
@@ -73,8 +109,8 @@ _STRUCTURED_PROTOCOL_CONTEXT = """## Bounded Dialogue Protocol
 This is a fresh, non-interactive invocation. Do not wait for live input and do
 not use session persistence. The transport requires structured output. Put the
 complete human-readable findings or implementation report in `result`, then
-provide `status`, `summary`, `questions`, `state_file`, and `concerns` exactly
-as required by the supplied JSON schema. Do not print an XML envelope or place
+provide `status`, `summary`, `questions`, `state_file`, `concerns`, and the two
+diagnostic category arrays exactly as defined by the supplied JSON schema. Do not print an XML envelope or place
 any report outside the structured output.
 
 Rules:
@@ -82,6 +118,8 @@ Rules:
 - `DONE_WITH_CONCERNS` requires at least one concern.
 - `concerns` must be empty unless status is `DONE_WITH_CONCERNS`.
 - `questions` must be empty unless status is `NEEDS_CONTEXT`.
+- Use the narrowest applicable values in `concern_categories` and
+  `evidence_categories`; do not copy prose into these arrays.
 - The summary, result, and concerns must agree. A material unresolved concern
   must remain qualified in the conclusion; do not present it as confirmed.
 - `state_file` must be `null` unless useful state was written; a non-null value
@@ -189,7 +227,7 @@ def normalize_dialogue_result(result: dict, cwd: str) -> dict:
         if not isinstance(structured_output, dict):
             return _protocol_error(result, "structured output must be a JSON object.")
         fields = set(structured_output)
-        missing = _DIALOGUE_FIELDS - fields
+        missing = _DIALOGUE_REQUIRED_FIELDS - fields
         unexpected = fields - _DIALOGUE_FIELDS
         if missing:
             return _protocol_error(
@@ -270,6 +308,30 @@ def _normalize_dialogue_payload(
 
         questions = _validate_string_list(envelope.get("questions", []), "questions")
         concerns = _validate_string_list(envelope.get("concerns", []), "concerns")
+        concern_categories = _validate_string_list(
+            envelope.get("concern_categories", []), "concern_categories"
+        )
+        evidence_categories = _validate_string_list(
+            envelope.get("evidence_categories", []), "evidence_categories"
+        )
+        invalid_concern_categories = set(concern_categories) - _CONCERN_CATEGORIES
+        if invalid_concern_categories:
+            raise ValueError(
+                "concern_categories contains unsupported values: "
+                + ", ".join(sorted(invalid_concern_categories))
+                + "."
+            )
+        invalid_evidence_categories = set(evidence_categories) - _EVIDENCE_CATEGORIES
+        if invalid_evidence_categories:
+            raise ValueError(
+                "evidence_categories contains unsupported values: "
+                + ", ".join(sorted(invalid_evidence_categories))
+                + "."
+            )
+        if len(concern_categories) != len(set(concern_categories)):
+            raise ValueError("concern_categories must not contain duplicates.")
+        if len(evidence_categories) != len(set(evidence_categories)):
+            raise ValueError("evidence_categories must not contain duplicates.")
         if agent_status == "NEEDS_CONTEXT":
             if not 1 <= len(questions) <= 3:
                 raise ValueError("NEEDS_CONTEXT requires one to three questions.")
@@ -302,6 +364,8 @@ def _normalize_dialogue_payload(
         "summary": summary,
         "questions": questions,
         "concerns": concerns,
+        "concern_categories": concern_categories,
+        "evidence_categories": evidence_categories,
         "state_file": state_file,
         "protocol_version": 1,
         "terminal_protocol": terminal_protocol,

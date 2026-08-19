@@ -115,6 +115,107 @@ def _tool_result(tool_id: str, *, is_error: bool = False) -> dict:
 
 
 class ExecutorLivenessTests(unittest.TestCase):
+    def test_execute_agent_attaches_sanitized_runner_context(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="inspect",
+            cwd="/tmp",
+            permission="read-only",
+            model="MiniMax-M3",
+            effort="high",
+            structured_output_schema='{"type":"object"}',
+        )
+
+        with (
+            patch(
+                "_executor.build_invocation_args",
+                return_value=(
+                    "claude",
+                    [
+                        "--tools",
+                        "Read,Glob,Grep,StructuredOutput",
+                        "--model",
+                        "MiniMax-M3",
+                        "--effort",
+                        "high",
+                    ],
+                    None,
+                ),
+            ),
+            patch(
+                "_executor._spawn_and_drive",
+                return_value={"status": "success", "cli": "minimax"},
+            ),
+        ):
+            result = execute_agent(invocation, timeout_ms=600_000)
+
+        self.assertEqual(
+            result["runner_context"],
+            {
+                "model": "MiniMax-M3",
+                "effort": "high",
+                "permission": "read-only",
+                "tools_mode": "explicit",
+                "tools": ["Read", "Glob", "Grep", "StructuredOutput"],
+            },
+        )
+
+    def test_runner_context_uses_resolved_env_model_and_rejects_prose(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="inspect",
+            cwd="/tmp",
+            permission="read-only",
+            effort="high with sk-cp-secret-value",
+        )
+
+        with (
+            patch(
+                "_executor.build_invocation_args",
+                return_value=(
+                    "claude",
+                    ["--tools", "Read,Glob,Grep"],
+                    {"ANTHROPIC_MODEL": "MiniMax-M3"},
+                ),
+            ),
+            patch(
+                "_executor._spawn_and_drive",
+                return_value={"status": "success", "cli": "minimax"},
+            ),
+        ):
+            result = execute_agent(invocation, timeout_ms=600_000)
+
+        self.assertEqual(result["runner_context"]["model"], "MiniMax-M3")
+        self.assertEqual(result["runner_context"]["effort"], "default")
+        self.assertNotIn("secret-value", str(result["runner_context"]))
+
+    def test_prompt_named_tools_does_not_confuse_runner_context(self) -> None:
+        invocation = AgentInvocation(
+            cli="minimax",
+            prompt="--tools",
+            cwd="/tmp",
+            permission="yolo",
+        )
+
+        with (
+            patch(
+                "_executor.build_invocation_args",
+                return_value=("claude", ["--dangerously-skip-permissions", "-p", "--tools"], None),
+            ),
+            patch(
+                "_executor.resolved_tool_context",
+                return_value=("default", ()),
+            ),
+            patch(
+                "_executor._spawn_and_drive",
+                return_value={"status": "success", "cli": "minimax"},
+            ),
+        ):
+            result = execute_agent(invocation, timeout_ms=600_000)
+
+        self.assertEqual(result["runner_context"]["tools_mode"], "default")
+        self.assertEqual(result["runner_context"]["tools"], [])
+
     def test_safe_edit_uses_configured_timeout_as_semantic_cap(self) -> None:
         invocation = AgentInvocation(
             cli="minimax",

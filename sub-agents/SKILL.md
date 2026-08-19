@@ -29,6 +29,10 @@ fixture with explicit paths and commands for runner or writer behavior. Do not
 substitute fake/unit tests for this live gate, expose credentials in the prompt,
 or use unrelated project work as proof. Record the terminal transport fields,
 `agent_status`, files actually read or changed, and remaining concerns.
+The terminal `runner_context` records only the resolved model identifier,
+effort, permission profile, `tools_mode`, and exposed tool names. Treat it as runner truth for
+configuration diagnostics; it never contains prompts, command grants, provider
+prose, environment values, or credentials.
 
 ## Interpreting User Requests
 
@@ -221,6 +225,7 @@ Treat status as three separate layers:
 | Runner transport | `status`, `transport_exit_code`, `termination_reason` | Whether `run_subagent.py` produced a usable terminal outcome; its OS exit is 0 only for `success` |
 | Child CLI process | `cli_exit_code` | Raw subprocess return code, including negative signals; `terminal_event` may intentionally stop the CLI after a complete result |
 | Dialogue task | `agent_status` | `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, `BLOCKED`, or `PROTOCOL_ERROR` when `--dialogue` is used or the safe-edit runner emits a blocker |
+| Runner configuration | `runner_context` | Sanitized resolved `model`, `effort`, `permission`, `tools_mode`, and exposed `tools` for this invocation; `default` means the backend's default surface was not enumerated |
 
 `exit_code` is the normalized outcome code: 0 for a successful transport, 124
 for runner timeouts, 127 when the CLI is missing, and the abnormal child code
@@ -246,6 +251,12 @@ exits 0 and its last complete assistant message ends with a
 `termination_reason=assistant_envelope` and applies the same strict semantic
 validation. Plain text, non-dialogue runs, and nonzero child exits remain
 errors.
+
+Dialogue results may also include the optional structured arrays
+`concern_categories` and `evidence_categories`. Their values come from closed
+enums in the JSON schema; legacy payloads that omit them remain valid. Use the
+arrays for cross-session diagnostics and keep detailed task evidence in
+`result` and `observed_evidence_paths`.
 
 **By status:**
 

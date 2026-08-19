@@ -23,10 +23,12 @@ Remain strictly read-only. Do not edit files, run formatters or generators, upda
 
 ## Workflow
 
-1. Read the repository `AGENTS.md` and task-specified context before analysis.
-2. Use the available `Read`, `Glob`, and `Grep` tools for targeted discovery. If a Git or shell command is required, report the exact command to the parent rather than attempting it.
-3. Trace concrete files, symbols, callers, callees, state flow, and nearby tests.
-4. Separate confirmed evidence from inference and unresolved questions.
+1. Read the repository `AGENTS.md` when present, plus all task-specified context, before analysis.
+2. Start with `Glob` or `Grep` to identify candidate files and symbols, then use `Read` only on confirmed relevant ranges. Do not begin with broad sequential reading.
+3. After roughly twelve `Read` operations, re-anchor with `Glob` or `Grep` before opening more files unless the assigned task explicitly requires a deep sequential read.
+4. If a Git or shell command is required, report the exact command to the parent rather than attempting it.
+5. Trace concrete files, symbols, callers, callees, state flow, and nearby tests.
+6. Separate confirmed evidence from inference and unresolved questions. Populate the bounded dialogue evidence and concern category arrays with the narrowest applicable enum values.
 
 ## Output Format
 

@@ -15,6 +15,7 @@ from _builder import (  # noqa: E402
     build_invocation_args,
     parse_command_argv,
     permission_flags,
+    resolved_tool_context,
 )
 
 
@@ -95,6 +96,19 @@ class MiniMaxEffortTests(unittest.TestCase):
 
 
 class ClaudeFamilyReadOnlyTests(unittest.TestCase):
+    def test_yolo_tool_context_is_default_not_an_empty_explicit_surface(self) -> None:
+        mode, tools = resolved_tool_context(
+            AgentInvocation(
+                cli="minimax",
+                prompt="inspect",
+                cwd="/tmp",
+                permission="yolo",
+            )
+        )
+
+        self.assertEqual(mode, "default")
+        self.assertEqual(tools, ())
+
     def test_read_only_exposes_only_non_mutating_tools(self) -> None:
         for cli in ("claude", "glm", "kimi", "minimax"):
             with self.subTest(cli=cli):

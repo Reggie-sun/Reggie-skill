@@ -24,6 +24,7 @@ Create a post-task diagnostic artifact from the session JSONL without copying ra
 4. Read the generated report and verify:
    - the source session ID and rollout path are correct;
    - MiniMax terminal truth keeps `status`, `transport_exit_code`, `cli_exit_code`, `termination_reason`, and `agent_status` separate;
+   - terminal rows show sanitized runner-resolved `model`, `effort`, `permission`, exposed tools, and closed diagnostic categories when the runner supplied them;
    - invocation rows contain only flag shape, counts, command families, prompt length, and prompt hash;
    - `Diagnostic Signals` separates activity/tool/evidence efficiency findings from terminal failures;
    - no prompt, exact command, API key, environment value, full JSONL line, or full provider result appears.
@@ -63,6 +64,8 @@ Use repeated signals across different session fingerprints to justify `sub-agent
 - Capture fingerprints intentionally ignore unrelated later JSONL growth when MiniMax invocation, activity, terminal, and failure data are unchanged.
 - Capture fingerprints include the report schema version, so a changed analysis algorithm produces a fresh report instead of reusing stale diagnostics.
 - Terminal rows come only from a schema-valid final runner envelope associated with the original invocation or its attached process polls; provider prose is not terminal truth.
+- `runner_context` contains only strict runner-owned identifiers. `tools_mode=explicit` lists the enforced tool surface; `tools_mode=default` means the backend default was not enumerated. Historical terminals without context render these fields as `unknown`; the capture never infers them from provider prose.
+- `concern_categories` and `evidence_categories` are closed categorical signals. Unknown historical values collapse to `other` instead of being copied verbatim.
 - Error output is reduced to allowlisted categories such as `protocol` or `evidence_incomplete`; exact error prose is never copied.
 - The report intentionally omits semantic task output. Re-open the source session narrowly if a specific optimization hypothesis requires more evidence.
 

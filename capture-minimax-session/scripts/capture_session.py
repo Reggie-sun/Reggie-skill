@@ -30,7 +30,7 @@ from session_signals import (  # noqa: E402
 
 DEFAULT_SESSIONS_ROOT = Path("/home/reggie/.codex/sessions")
 DEFAULT_OUTPUT_ROOT = Path("/home/reggie/.codex/session-diagnostics/minimax")
-REPORT_SCHEMA_VERSION = 3
+REPORT_SCHEMA_VERSION = 4
 REPORT_MAX_BYTES = 2_000_000
 REPORT_COMPLETE_MARKER = "<!-- capture-minimax-session:complete -->"
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
@@ -87,6 +87,31 @@ BLOCKER_KINDS = frozenset(
         "tool_error_loop",
     }
 )
+CONCERN_CATEGORIES = frozenset(
+    {
+        "architecture_uncertainty",
+        "compatibility_risk",
+        "evidence_gap",
+        "permission_or_tooling",
+        "protocol_or_output",
+        "test_gap",
+        "timeout_or_performance",
+    }
+)
+EVIDENCE_CATEGORIES = frozenset(
+    {
+        "commands_run",
+        "files_inspected",
+        "runtime_observed",
+        "symbols_traced",
+        "tests_inspected",
+    }
+)
+RUNNER_PERMISSIONS = frozenset({"read-only", "safe-edit", "yolo"})
+RUNNER_EFFORTS = frozenset({"default", "low", "medium", "high", "max"})
+RUNNER_TOOLS_MODES = frozenset({"explicit", "default"})
+MODEL_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
+TOOL_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.:*+-]{0,79}$")
 
 
 @dataclass
@@ -121,6 +146,13 @@ class Terminal:
     concern_count: int
     blocker_kind: str
     error_signature: str
+    resolved_model: str = "unknown"
+    resolved_effort: str = "unknown"
+    resolved_permission: str = "unknown"
+    resolved_tools_mode: str = "unknown"
+    resolved_tools: tuple[str, ...] = ()
+    concern_categories: tuple[str, ...] = ()
+    evidence_categories: tuple[str, ...] = ()
 
 
 @dataclass
@@ -394,6 +426,24 @@ def _categorical(value: object, allowed: frozenset[str]) -> str:
     return value if value in allowed else "other"
 
 
+def _category_tuple(value: object, allowed: frozenset[str]) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    categories = {
+        item if item in allowed else "other"
+        for item in value
+        if isinstance(item, str)
+    }
+    return tuple(sorted(categories))
+
+
+def _runner_tools(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or len(value) > 32:
+        return ()
+    tools = [item for item in value if isinstance(item, str) and TOOL_NAME_RE.fullmatch(item)]
+    return tuple(tools) if len(tools) == len(value) else ()
+
+
 def _terminal_from_dict(timestamp: str, value: dict[str, Any]) -> Terminal | None:
     if not _is_terminal_envelope(value):
         return None
@@ -406,6 +456,16 @@ def _terminal_from_dict(timestamp: str, value: dict[str, Any]) -> Terminal | Non
     )
     observed = value.get("observed_evidence_paths")
     concerns = value.get("concerns")
+    runner_context = value.get("runner_context")
+    if not isinstance(runner_context, dict):
+        runner_context = {}
+    raw_model = runner_context.get("model")
+    if not isinstance(raw_model, str) or not raw_model:
+        resolved_model = "unknown"
+    elif MODEL_IDENTIFIER_RE.fullmatch(raw_model):
+        resolved_model = raw_model
+    else:
+        resolved_model = "other"
     error = value.get("error", "")
     category_text = " ".join(
         str(item)
@@ -438,6 +498,21 @@ def _terminal_from_dict(timestamp: str, value: dict[str, Any]) -> Terminal | Non
         concern_count=len(concerns) if isinstance(concerns, list) else 0,
         blocker_kind=_redact(str(blocker_kind), 80),
         error_signature=error_signature,
+        resolved_model=resolved_model,
+        resolved_effort=_categorical(runner_context.get("effort"), RUNNER_EFFORTS),
+        resolved_permission=_categorical(
+            runner_context.get("permission"), RUNNER_PERMISSIONS
+        ),
+        resolved_tools_mode=_categorical(
+            runner_context.get("tools_mode"), RUNNER_TOOLS_MODES
+        ),
+        resolved_tools=_runner_tools(runner_context.get("tools")),
+        concern_categories=_category_tuple(
+            value.get("concern_categories"), CONCERN_CATEGORIES
+        ),
+        evidence_categories=_category_tuple(
+            value.get("evidence_categories"), EVIDENCE_CATEGORIES
+        ),
     )
 
 
@@ -453,6 +528,13 @@ def _terminal_key(terminal: Terminal) -> tuple[object, ...]:
         terminal.concern_count,
         terminal.blocker_kind,
         terminal.error_signature,
+        terminal.resolved_model,
+        terminal.resolved_effort,
+        terminal.resolved_permission,
+        terminal.resolved_tools_mode,
+        terminal.resolved_tools,
+        terminal.concern_categories,
+        terminal.evidence_categories,
     )
 
 
@@ -783,16 +865,28 @@ def render_markdown(capture: Capture, captured_at: str) -> str:
     if capture.terminals:
         lines.extend(
             [
-                "| # | Timestamp | status | transport | CLI | reason | agent_status | Evidence | Concerns | Blocker | Error signature |",
-                "|---:|---|---|---|---|---|---|---:|---:|---|---|",
+                "| # | Timestamp | status | transport | CLI | reason | agent_status | Model | Effort | Permission | Tools | Evidence | Evidence categories | Concerns | Concern categories | Blocker | Error signature |",
+                "|---:|---|---|---|---|---|---|---|---|---|---|---:|---|---:|---|---|---|",
             ]
         )
         for index, item in enumerate(capture.terminals, 1):
+            tools_text = (
+                ", ".join(item.resolved_tools) or "none"
+                if item.resolved_tools_mode == "explicit"
+                else item.resolved_tools_mode
+            )
             lines.append(
                 f"| {index} | {_markdown(item.timestamp)} | {_markdown(item.status)} | "
                 f"{_markdown(item.transport_exit_code)} | {_markdown(item.cli_exit_code)} | "
                 f"{_markdown(item.termination_reason)} | {_markdown(item.agent_status)} | "
-                f"{item.evidence_count} | {item.concern_count} | {_markdown(item.blocker_kind)} | "
+                f"{_markdown(item.resolved_model)} | {_markdown(item.resolved_effort)} | "
+                f"{_markdown(item.resolved_permission)} | "
+                f"{_markdown(tools_text)} | "
+                f"{item.evidence_count} | "
+                f"{_markdown(', '.join(item.evidence_categories) or 'none')} | "
+                f"{item.concern_count} | "
+                f"{_markdown(', '.join(item.concern_categories) or 'none')} | "
+                f"{_markdown(item.blocker_kind)} | "
                 f"{_markdown(item.error_signature)} |"
             )
     else:

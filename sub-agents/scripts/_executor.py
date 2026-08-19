@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import signal
 import shutil
 import subprocess
@@ -10,12 +11,19 @@ import tempfile
 import threading
 import time
 
-from _builder import AgentInvocation, build_invocation_args
+from _builder import AgentInvocation, build_invocation_args, resolved_tool_context
 from _constants import DEFAULT_TIMEOUT_MS
 from _stream import StreamProcessor
 
 _SEMANTIC_PROGRESS_CLIS = frozenset({"claude", "glm", "kimi", "minimax"})
 _MAX_STAGNATION_MS = 120_000
+_DIAGNOSTIC_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,127}$")
+
+
+def _diagnostic_identifier(value: object, default: str) -> str:
+    if isinstance(value, str) and _DIAGNOSTIC_IDENTIFIER_RE.fullmatch(value):
+        return value
+    return default
 
 
 def _partial_response(
@@ -624,31 +632,48 @@ def execute_agent(
 ) -> dict:
     command, args, env_override = build_invocation_args(inv)
 
+    tools_mode, tools = resolved_tool_context(inv)
+    env_model = env_override.get("ANTHROPIC_MODEL") if env_override else None
+    runner_context = {
+        "model": _diagnostic_identifier(inv.model or env_model, "default"),
+        "effort": _diagnostic_identifier(inv.effort, "default"),
+        "permission": inv.permission,
+        "tools_mode": tools_mode,
+        "tools": list(tools),
+    }
+
+    def attach_runner_context(result: dict) -> dict:
+        return {**result, "runner_context": runner_context}
+
     if inv.cli == "opencode":
         temp_dir = tempfile.mkdtemp(prefix="subagent-opencode-")
         try:
             proc_env = _build_proc_env(_isolated_opencode_env(env_override, temp_dir))
-            return _spawn_and_drive(command, args, proc_env, inv.cwd, inv.cli, timeout_ms)
+            return attach_runner_context(
+                _spawn_and_drive(command, args, proc_env, inv.cwd, inv.cli, timeout_ms)
+            )
         finally:
             # _spawn_and_drive reaps the process before returning.
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     proc_env = _build_proc_env(env_override)
-    return _spawn_and_drive(
-        command,
-        args,
-        proc_env,
-        inv.cwd,
-        inv.cli,
-        timeout_ms,
-        semantic_timeout_ms=(
-            timeout_ms
-            if inv.permission == "safe-edit" or inv.cli in _SEMANTIC_PROGRESS_CLIS
-            else None
-        ),
-        allowed_commands=inv.allowed_commands,
-        fail_fast_tool_errors=inv.permission == "safe-edit",
-        allow_dialogue_fallback=allow_dialogue_fallback,
-        allow_structured_output=inv.structured_output_schema is not None,
-        required_evidence_paths=inv.required_evidence_paths,
+    return attach_runner_context(
+        _spawn_and_drive(
+            command,
+            args,
+            proc_env,
+            inv.cwd,
+            inv.cli,
+            timeout_ms,
+            semantic_timeout_ms=(
+                timeout_ms
+                if inv.permission == "safe-edit" or inv.cli in _SEMANTIC_PROGRESS_CLIS
+                else None
+            ),
+            allowed_commands=inv.allowed_commands,
+            fail_fast_tool_errors=inv.permission == "safe-edit",
+            allow_dialogue_fallback=allow_dialogue_fallback,
+            allow_structured_output=inv.structured_output_schema is not None,
+            required_evidence_paths=inv.required_evidence_paths,
+        )
     )

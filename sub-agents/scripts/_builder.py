@@ -256,6 +256,15 @@ def _invocation_flags(inv: AgentInvocation) -> list:
     return flags
 
 
+def resolved_tool_context(inv: AgentInvocation) -> tuple[str, tuple[str, ...]]:
+    """Return structured tool-surface truth without parsing the final CLI argv."""
+    flags = _invocation_flags(inv)
+    if "--tools" not in flags:
+        return "default", ()
+    tools_value = flags[flags.index("--tools") + 1]
+    return "explicit", tuple(item for item in tools_value.split(",") if item)
+
+
 def _concatenated_args(
     inv: AgentInvocation, perm_flags: list, env: dict | None
 ) -> tuple[str, list, dict | None]:
