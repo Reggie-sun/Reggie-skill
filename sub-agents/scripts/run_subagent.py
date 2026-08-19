@@ -24,6 +24,7 @@ from _loader import (  # noqa: E402
     resolve_agent_reference,
 )
 from _resolver import resolve_cli  # noqa: E402
+from _tdd import build_tdd_context  # noqa: E402
 
 
 def _print_error(error: str, exit_code: int = 1, cli: str | None = None) -> None:
@@ -98,6 +99,20 @@ def main() -> None:
             "and may be repeated"
         ),
     )
+    parser.add_argument(
+        "--tdd",
+        action="store_true",
+        help="Inject the strict RED-GREEN-REFACTOR writer contract",
+    )
+    parser.add_argument(
+        "--tdd-command",
+        action="append",
+        default=[],
+        help=(
+            "Exact command that must demonstrate RED then GREEN; requires --tdd, "
+            "must also appear as --allow-command, and must be supplied exactly once"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -153,6 +168,35 @@ def main() -> None:
     if args.parent_answer_file and not args.dialogue:
         _print_error("--parent-answer-file requires --dialogue.", cli=cli)
         sys.exit(1)
+    if args.tdd_command and not args.tdd:
+        _print_error("--tdd-command requires --tdd.", cli=cli)
+        sys.exit(1)
+    if args.tdd:
+        if permission != "safe-edit":
+            _print_error("--tdd requires a safe-edit agent definition.", cli=cli)
+            sys.exit(1)
+        if not args.tdd_command:
+            _print_error(
+                "--tdd requires exactly one --tdd-command that is also "
+                "granted with --allow-command.",
+                cli=cli,
+            )
+            sys.exit(1)
+        if len(args.tdd_command) != 1:
+            _print_error(
+                "--tdd requires exactly one --tdd-command.",
+                cli=cli,
+            )
+            sys.exit(1)
+        tdd_command = args.tdd_command[0]
+        if tdd_command not in args.allow_command:
+            _print_error(
+                "The --tdd-command must also be granted by an identical "
+                f"--allow-command; missing: {tdd_command!r}.",
+                cli=cli,
+            )
+            sys.exit(1)
+        system_context = build_tdd_context(system_context, tdd_command)
 
     if args.dialogue:
         try:

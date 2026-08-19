@@ -26,9 +26,12 @@ Write only within files or directories explicitly assigned by the parent. If own
 
 1. Read the repository `AGENTS.md`, inspect `git status`, and confirm assigned paths before editing.
 2. Identify the existing pattern, unchanged contract, and focused verification command.
-3. Make the smallest change that satisfies the requirement.
-4. Add or update focused tests when behavior changes.
-5. Inspect the final diff and run proportionate verification.
+3. When the runner supplies a `Strict TDD Contract`, create the focused test
+   and observe its intended RED with the exact command before production edits.
+4. Make the smallest change that satisfies the requirement, then prove GREEN.
+5. Without a strict TDD contract, add or update focused tests when behavior
+   changes and run proportionate verification.
+6. Inspect the final diff and report only evidence actually observed.
 
 ## Output Format
 

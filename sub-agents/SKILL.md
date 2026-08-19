@@ -32,6 +32,8 @@ Extract parameters from user's natural language request:
 | `--allow-path` | File or directory pattern relative to `--cwd` that a Claude-family `safe-edit` agent may edit; repeat once per ownership path |
 | `--dialogue` | Require the bounded task-state protocol for a fresh invocation |
 | `--parent-answer-file` | Validated prior-turn answer artifact inside `--cwd`; repeat as needed and use only with `--dialogue` |
+| `--tdd` | Inject the strict RED-GREEN-REFACTOR contract for a `safe-edit` writer |
+| `--tdd-command` | The one exact command that must prove RED then GREEN; supply exactly once and grant identically with `--allow-command` |
 
 **Example**:
 "Run code-reviewer on src/"
@@ -146,6 +148,18 @@ shell string. Copy the displayed exact grant rather than reconstructing it.
 Append one `--allow-path <relative path>` per owned file or directory pattern;
 at least one is required for `safe-edit`, and edits outside those paths are
 denied non-interactively.
+When strict TDD is selected, append `--tdd`, exactly one
+`--tdd-command <exact focused test>` flag, and an identical `--allow-command`
+grant. The runner rejects TDD mode without a `safe-edit` definition or when a
+TDD command is not granted exactly. The injected contract requires the writer
+to create the regression test, observe the intended RED with that command,
+then edit production and rerun the same command for GREEN. Collection, lint,
+import failure, or permission denial is not RED. If production edits already
+exist without credible RED evidence, the writer must stop with
+`NEEDS_CONTEXT`; a fresh invocation does not retroactively establish TDD.
+The runner validates the mode and exact command grant, but it does not infer
+RED/GREEN ordering from the provider event stream. The parent must verify the
+reported commands and workspace diff before accepting `DONE`.
 For a task that may require parent clarification, append `--dialogue`. If the
 agent returns `NEEDS_CONTEXT`, write the answer to a UTF-8 artifact inside
 `--cwd` and fresh-dispatch the same task with
@@ -306,6 +320,13 @@ This keeps active exploration alive without letting identical heartbeats evade
 the resolved agent timeout. Use repeated flags for explicit ownership, focused tests,
 and task-only Git commands the parent has authorized. Do not use `yolo` as a
 workaround for a missing path or command grant.
+
+Claude CLI is the transport and tool host for `minimax`; it does not make
+Claude user-installed plugins or Superpowers available. The empty
+`--setting-sources`, strict empty MCP config, and isolated system prompt are
+intentional. Workflow disciplines required from an external model must be
+supplied explicitly, such as `--tdd`, instead of enabling ambient Claude
+settings.
 
 ## MiniMax Configuration
 

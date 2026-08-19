@@ -228,6 +228,28 @@ tests and task-only Git commands the writer is authorized to run. Neither
 external role may dispatch subagents. Native reviewers remain strictly
 read-only.
 
+Before every implementation dispatch, classify the task using the active
+global/repository TDD policy. For regressions, non-trivial behavior, public
+contracts, parsing, state transitions, or other tasks where a failing test is
+a credible reproduction, dispatch the external writer with `--tdd`. Select an
+exact focused test command up front and pass the identical shell string once as
+`--tdd-command` and once as `--allow-command`; include the test path in owned
+`--allow-path` entries. Mechanical/configuration tasks use proportional
+verification without `--tdd`. Never assume Claude-hosted Superpowers are
+inherited by MiniMax: the external runner intentionally isolates Claude
+settings, so this explicit flag is the discipline boundary.
+The flag validates dispatch inputs and injects the strict contract; it is not a
+mechanical proof of provider tool ordering. The parent must inspect the report,
+diff, and executable evidence before accepting `DONE`.
+
+If a TDD writer edits production before credible RED, or a failed invocation
+leaves production edits without RED evidence, do not preserve that draft as a
+valid starting point for a TDD retry. Inspect the task-owned diff, record the
+violation, and restore a clean task-owned pre-RED state only when authorized;
+otherwise stop for direction. Then fresh-dispatch with the same brief and
+`--tdd` contract. A collection error, permission denial, syntax/import error,
+or already-passing test does not satisfy RED.
+
 External invocations are fresh and stateless. Every fix dispatch therefore
 includes the task brief path, report path, current state, and exact open
 findings; use the report as persistent memory rather than assuming session

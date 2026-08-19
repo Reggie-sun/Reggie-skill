@@ -40,9 +40,11 @@ Subagent (general-purpose):
     ## Your Job
 
     Once you're clear on requirements:
-    1. Implement exactly what the task specifies
-    2. Write tests (following TDD if task says to)
-    3. Verify implementation works
+    1. If strict TDD is selected, create the focused test and observe intended
+       RED with the exact TDD command before editing production code
+    2. Implement exactly what the task specifies
+    3. Prove GREEN with the same exact TDD command, or use the assigned
+       proportional verification when strict TDD is not selected
     4. Commit your work only when task-only staging and commit are AUTHORIZED below
     5. Self-review (see below)
     6. Report back
@@ -68,6 +70,14 @@ Subagent (general-purpose):
 
     While iterating, run the focused test for what you're changing; run the
     full suite once before committing, not after every edit.
+
+    Strict TDD mode: [REQUIRED with exact TDD command | NOT SELECTED].
+    For an external writer, REQUIRED means the controller passes `--tdd`, the
+    same command as `--tdd-command` and `--allow-command`, and the test path as
+    owned. Do not treat collection, import/syntax failure, permission denial,
+    or an already-passing test as RED. If production edits already exist
+    without credible RED evidence, stop with NEEDS_CONTEXT rather than adapting
+    them or writing tests around them.
 
     ## You Do Not Dispatch Subagents
 
