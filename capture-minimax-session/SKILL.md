@@ -57,6 +57,7 @@ Use repeated signals across different session fingerprints to justify `sub-agent
 ## Interpretation Boundaries
 
 - An invocation record proves that `run_subagent.py` was requested, not that the backend started.
+- A dynamically constructed runner command may expose strict runner activity/process framing without a safely parseable flag shape. Associate its activity and terminal truth, but report the dynamic command shape instead of inventing `agent`, `cwd`, prompt, or grant fields.
 - Activity events prove observed provider/runner events, not task correctness.
 - `status=success` is transport truth; use `agent_status` for the dialogue task state.
 - A missing terminal result remains unresolved; do not infer success from prose or edits.

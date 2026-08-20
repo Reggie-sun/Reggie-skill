@@ -91,6 +91,350 @@ def _write_rollout(path: Path, session_id: str) -> None:
 
 
 class CaptureSessionTests(unittest.TestCase):
+    def test_quoted_cmd_runner_input_is_parsed_but_list_is_not_an_invocation(self) -> None:
+        timestamp = "2026-08-20T00:00:00Z"
+        quoted = (
+            'const r = await tools.exec_command({"cmd":"python3 '
+            '/x/run_subagent.py --agent explorer --cwd /repo --prompt task"});'
+        )
+        listing = "python3 /x/run_subagent.py --list"
+        prose = (
+            "The runner lives at /x/run_subagent.py, but this sentence does not "
+            "invoke python or provide runner flags."
+        )
+
+        parsed = MODULE._parse_invocation(timestamp, quoted)
+
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertEqual(parsed.agent, "explorer")
+        self.assertEqual(parsed.cwd, "/repo")
+        self.assertEqual(parsed.prompt_chars, 4)
+        self.assertIsNone(MODULE._parse_invocation(timestamp, listing))
+        self.assertIsNone(MODULE._parse_invocation(timestamp, prose))
+
+    def test_dynamic_runner_command_accepts_direct_and_derived_cmd_forms(self) -> None:
+        direct = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const r=await tools.exec_command({cmd:args.map(q).join(" ")});'
+        )
+        derived = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const cmd=args.map(q).join(" ");'
+            'const r=await tools.exec_command({cmd,yield_time_ms:30000});'
+        )
+
+        self.assertTrue(MODULE._contains_dynamic_runner_command(direct))
+        self.assertTrue(MODULE._contains_dynamic_runner_command(derived))
+
+    def test_dynamic_runner_shape_must_be_the_actual_exec_cmd_property(self) -> None:
+        side_object = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const audit={cmd:args.map(q).join(" ")};'
+            'const r=await tools.exec_command({cmd:"some_other_program"});'
+        )
+        non_cmd_reference = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const cmd=args.map(q).join(" ");'
+            'const r=await tools.exec_command({note:cmd,cmd:"some_other_program"});'
+        )
+        commented_call = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];\n'
+            '// tools.exec_command({cmd:args.map(q).join(" ")});\n'
+            'const r=await tools.exec_command({cmd:"some_other_program"});'
+        )
+        lookalike_receiver = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const r=await fake_tools.exec_command({cmd:args.map(q).join(" ")});'
+        )
+        nested_receiver = (
+            'const args=["python3","/x/run_subagent.py","--agent","explorer"];'
+            'const r=await obj.tools.exec_command({cmd:args.map(q).join(" ")});'
+        )
+
+        self.assertFalse(MODULE._contains_dynamic_runner_command(side_object))
+        self.assertFalse(MODULE._contains_dynamic_runner_command(non_cmd_reference))
+        self.assertFalse(MODULE._contains_dynamic_runner_command(commented_call))
+        self.assertFalse(MODULE._contains_dynamic_runner_command(lookalike_receiver))
+        self.assertFalse(MODULE._contains_dynamic_runner_command(nested_receiver))
+
+    def test_selected_direct_poll_output_recovers_terminal_with_lowercase_session_marker(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        activity = (
+            "[sub-agent] activity cli=minimax elapsed=1s event=result "
+            "session=external-1"
+        )
+        records = [
+            {
+                "timestamp": "t0",
+                "type": "session_meta",
+                "payload": {"id": session_id, "cwd": "/repo"},
+            },
+            {
+                "timestamp": "t1",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--dialogue --prompt task"});'
+                    ),
+                },
+            },
+            {
+                "timestamp": "t2",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": [
+                        {"type": "input_text", "text": "tool display metadata"},
+                        {"type": "input_text", "text": activity},
+                        {"type": "input_text", "text": "session_id=42"},
+                    ],
+                },
+            },
+            {
+                "timestamp": "t3",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": (
+                        "const r=await tools.write_stdin({session_id:42,"
+                        'chars:""});'
+                    ),
+                },
+            },
+            {
+                "timestamp": "t4",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": [
+                        {"type": "input_text", "text": "poll metadata"},
+                        {
+                            "type": "input_text",
+                            "text": activity + "\n" + json.dumps(terminal),
+                        },
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual([item.agent for item in capture.invocations], ["explorer"])
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertEqual(capture.terminals[0].agent_status, "DONE")
+        self.assertEqual(
+            [(item.elapsed_seconds, item.event) for item in capture.activity_timeline],
+            [(1, "result"), (1, "result")],
+        )
+
+    def test_dynamic_runner_command_uses_strict_framing_without_inventing_invocation_shape(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        activity = (
+            "[sub-agent] activity cli=minimax elapsed=3s event=result "
+            "session=external-2"
+        )
+        dynamic_input = (
+            'const args=["python3","/x/run_subagent.py","--agent",'
+            '"explorer","--cwd","/repo","--prompt",prompt];'
+            'const r=await tools.exec_command({cmd:args.map(q).join(" ")});'
+        )
+        records = [
+            {
+                "timestamp": "t0",
+                "type": "session_meta",
+                "payload": {"id": session_id, "cwd": "/repo"},
+            },
+            {
+                "timestamp": "t1",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": dynamic_input,
+                },
+            },
+            {
+                "timestamp": "t2",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "session_id": 77,
+                                    "exit_code": None,
+                                    "wall_time_seconds": 0.5,
+                                    "output": activity,
+                                }
+                            ),
+                        },
+                    ],
+                },
+            },
+            {
+                "timestamp": "t3",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": "const r=await tools.write_stdin({session_id:77});",
+                },
+            },
+            {
+                "timestamp": "t4",
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": activity + "\n" + json.dumps(terminal),
+                        }
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+            report = MODULE.render_markdown(capture, "now")
+
+        self.assertEqual(capture.invocations, [])
+        self.assertEqual(capture.unparsed_runner_calls, 1)
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertIn("dynamic command shape", report)
+        self.assertNotIn("| unknown | definition/default |", report)
+
+    def test_runner_name_in_side_string_cannot_select_another_command(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "other-command",
+                    "name": "exec",
+                    "input": (
+                        'const note="/x/run_subagent.py";'
+                        'const args=["some_other_program"];'
+                        'const r=await tools.exec_command({cmd:args.map(q).join(" ")});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "other-command",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "session_id": 88,
+                                    "exit_code": None,
+                                    "wall_time_seconds": 0.5,
+                                    "output": (
+                                        "[sub-agent] activity cli=minimax elapsed=1s "
+                                        "event=result session=external-fake"
+                                    ),
+                                }
+                            ),
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": "const r=await tools.write_stdin({session_id:88});",
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(terminal),
+                        }
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(capture.unparsed_runner_calls, 0)
+        self.assertEqual(capture.activity_timeline, [])
+        self.assertEqual(capture.terminals, [])
+
     def test_report_surfaces_activity_and_evidence_optimization_signals(self) -> None:
         capture = MODULE.Capture(
             session_id="session-12345678",
@@ -136,6 +480,21 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertIn("zero_terminal_evidence", report)
         self.assertIn("read_heavy_exploration", report)
         self.assertNotIn("No known runner failure signature", report)
+
+    def test_dynamic_runner_without_terminal_gets_attachment_lead(self) -> None:
+        capture = MODULE.Capture(
+            session_id="session-12345678",
+            source_path=Path("rollout.jsonl"),
+            unparsed_runner_calls=1,
+        )
+
+        leads = MODULE._optimization_leads(capture)
+
+        self.assertIn(
+            "No MiniMax terminal record was captured; inspect process attachment "
+            "and output routing.",
+            leads,
+        )
 
     def test_signal_thresholds_do_not_overstate_small_or_short_activity(self) -> None:
         activities = [("external-1", index, "tool:Read") for index in range(14)]
@@ -385,6 +744,48 @@ class CaptureSessionTests(unittest.TestCase):
         self.assertEqual(
             list(MODULE._terminal_dicts_from_output(wrapped_prose)), []
         )
+
+    def test_unselected_direct_output_cannot_promote_terminal_truth(self) -> None:
+        session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "not-selected",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "[sub-agent] activity cli=minimax elapsed=1s "
+                                "event=result session=external-1\n"
+                                + json.dumps(terminal)
+                            ),
+                        }
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(capture.terminals, [])
 
     def test_provider_prose_session_id_cannot_attach_unrelated_poll(self) -> None:
         session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"

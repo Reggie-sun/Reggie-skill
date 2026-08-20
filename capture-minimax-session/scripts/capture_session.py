@@ -26,11 +26,14 @@ from session_signals import (  # noqa: E402
     optimization_leads,
     stable_fingerprint,
 )
+from runner_command_shapes import (  # noqa: E402
+    contains_dynamic_runner_command as _contains_dynamic_runner_command,
+)
 
 
 DEFAULT_SESSIONS_ROOT = Path("/home/reggie/.codex/sessions")
 DEFAULT_OUTPUT_ROOT = Path("/home/reggie/.codex/session-diagnostics/minimax")
-REPORT_SCHEMA_VERSION = 4
+REPORT_SCHEMA_VERSION = 5
 REPORT_MAX_BYTES = 2_000_000
 REPORT_COMPLETE_MARKER = "<!-- capture-minimax-session:complete -->"
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
@@ -38,7 +41,7 @@ ACTIVITY_RE = re.compile(
     r"\[sub-agent\]\s+activity\s+cli=minimax\s+elapsed=(\d+)s\s+"
     r"event=([^\s]+)(?:\s+session=([A-Za-z0-9._:-]+))?"
 )
-PROCESS_MARKER_RE = re.compile(r"^SESSION_ID=(\d+)$")
+PROCESS_MARKER_RE = re.compile(r"^(?:SESSION_ID|session_id)=(\d+)$")
 POLL_SESSION_RE = re.compile(r"session_id\s*:\s*(\d+)")
 SECRET_PATTERNS = (
     re.compile(r"\bsk-(?:cp-)?[A-Za-z0-9_-]{12,}\b"),
@@ -169,6 +172,7 @@ class Capture:
     source_cwd: str = "unknown"
     line_count: int = 0
     malformed_lines: int = 0
+    unparsed_runner_calls: int = 0
     invocations: list[Invocation] = field(default_factory=list)
     terminals: list[Terminal] = field(default_factory=list)
     activity_timeline: list[Activity] = field(default_factory=list)
@@ -232,7 +236,10 @@ def _extract_cmd(raw_input: Any) -> str | None:
         decoded = None
     if isinstance(decoded, dict) and isinstance(decoded.get("cmd"), str):
         return decoded["cmd"]
-    match = re.search(r'\bcmd\s*:\s*("(?:\\.|[^"\\])*")', raw_input)
+    match = re.search(
+        r'(?:(?:"cmd")|(?:\bcmd))\s*:\s*("(?:\\.|[^"\\])*")',
+        raw_input,
+    )
     if match:
         try:
             command = json.loads(match.group(1))
@@ -291,6 +298,8 @@ def _parse_invocation(timestamp: str, raw_input: Any) -> Invocation | None:
     cwd_values = _flag_values(args, "--cwd")
     cli_values = _flag_values(args, "--cli")
     prompts = _flag_values(args, "--prompt")
+    if "--list" in args or not agent_values or not cwd_values or not prompts:
+        return None
     prompt = prompts[-1] if prompts else ""
     commands = _flag_values(args, "--allow-command")
     agent = agent_values[-1] if agent_values else "unknown"
@@ -406,6 +415,27 @@ def _terminal_dicts_from_output(output: Any) -> Iterable[dict[str, Any]]:
             yield candidate
 
 
+def _terminal_dicts_from_selected_output(
+    output: Any,
+) -> Iterable[dict[str, Any]]:
+    """Decode terminal truth from an already-associated runner or poll output."""
+    yield from _terminal_dicts_from_output(output)
+    for text in _text_values(output):
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            continue
+        candidate = _decode_json_dict(lines[-1])
+        if candidate is None or not _is_terminal_envelope(candidate):
+            continue
+        if any(
+            ACTIVITY_RE.fullmatch(line) is None
+            and PROCESS_MARKER_RE.fullmatch(line) is None
+            for line in lines[:-1]
+        ):
+            continue
+        yield candidate
+
+
 def _process_ids_from_output(output: Any) -> set[str]:
     process_ids: set[str] = set()
     for wrapper in _transport_wrappers_from_output(output):
@@ -418,6 +448,23 @@ def _process_ids_from_output(output: Any) -> set[str]:
             if match:
                 process_ids.add(match.group(1))
     return process_ids
+
+
+def _has_runner_framing(output: Any) -> bool:
+    for wrapper in _transport_wrappers_from_output(output):
+        runner_output = wrapper.get("output")
+        if not isinstance(runner_output, str):
+            continue
+        for line in runner_output.splitlines():
+            stripped = line.strip()
+            if ACTIVITY_RE.fullmatch(stripped) or PROCESS_MARKER_RE.fullmatch(stripped):
+                return True
+    for text in _text_values(output):
+        for line in text.splitlines():
+            stripped = line.strip()
+            if ACTIVITY_RE.fullmatch(stripped) or PROCESS_MARKER_RE.fullmatch(stripped):
+                return True
+    return False
 
 
 def _categorical(value: object, allowed: frozenset[str]) -> str:
@@ -603,6 +650,19 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
             str(record.get("timestamp", "unknown")), payload.get("input")
         )
         if invocation is None:
+            call_id = payload.get("call_id")
+            output_record = (
+                outputs_by_call.get(call_id) if isinstance(call_id, str) else None
+            )
+            if (
+                isinstance(call_id, str)
+                and _contains_dynamic_runner_command(payload.get("input"))
+                and output_record is not None
+                and _has_runner_framing(output_record[1])
+            ):
+                capture.unparsed_runner_calls += 1
+                selected_call_ids.add(call_id)
+                process_ids.update(_process_ids_from_output(output_record[1]))
             continue
         capture.invocations.append(invocation)
         call_id = payload.get("call_id")
@@ -662,7 +722,7 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
                     capture.max_elapsed[external_session] = max(
                         capture.max_elapsed.get(external_session, 0), elapsed
                     )
-            for decoded in _terminal_dicts_from_output(output):
+            for decoded in _terminal_dicts_from_selected_output(output):
                 terminal = _terminal_from_dict(timestamp, decoded)
                 if terminal is None:
                     continue
@@ -701,7 +761,14 @@ def _optimization_leads(capture: Capture) -> list[str]:
     retry_counts = Counter(item.retry_key for item in capture.invocations)
     if any(count > 1 for count in retry_counts.values()):
         leads.append("Compare repeated prompt hashes against the bounded fresh-retry policy.")
-    if not capture.terminals and capture.invocations:
+    if capture.unparsed_runner_calls:
+        leads.append(
+            "Runner activity was captured from a dynamic command shape; use literal "
+            "runner flags when complete invocation-shape diagnostics are required."
+        )
+    if not capture.terminals and (
+        capture.invocations or capture.unparsed_runner_calls
+    ):
         leads.append("No MiniMax terminal record was captured; inspect process attachment and output routing.")
     leads.extend(optimization_leads(_diagnostic_signals(capture)))
     if not leads:
@@ -728,6 +795,7 @@ def _capture_fingerprint(capture: Capture) -> str:
         {
             "session_id": capture.session_id,
             "report_schema_version": REPORT_SCHEMA_VERSION,
+            "unparsed_runner_calls": capture.unparsed_runner_calls,
             "invocations": [item.__dict__ for item in capture.invocations],
             "terminals": [item.__dict__ for item in capture.terminals],
             "activities": [item.__dict__ for item in capture.activity_timeline],
@@ -826,6 +894,19 @@ def render_markdown(capture: Capture, captured_at: str) -> str:
                 f"{_markdown(families)} | {item.evidence_path_count} | "
                 f"{item.prompt_chars} | `{item.prompt_sha256}` |"
             )
+        if capture.unparsed_runner_calls:
+            lines.append("")
+            lines.append(
+                f"{capture.unparsed_runner_calls} runner call(s) used a dynamic command "
+                "shape; activity and terminal truth were associated without inventing "
+                "invocation fields."
+            )
+    elif capture.unparsed_runner_calls:
+        lines.append(
+            f"{capture.unparsed_runner_calls} runner call(s) used a dynamic command "
+            "shape; activity and terminal truth were associated without inventing "
+            "invocation fields."
+        )
     else:
         lines.append("No `run_subagent.py` invocation was detected.")
 
