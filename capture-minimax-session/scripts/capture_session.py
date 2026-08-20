@@ -20,6 +20,13 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+from cell_transport import (  # noqa: E402
+    activity_sessions_from_output,
+    cell_ids_from_output,
+    session_sets_intersect,
+    unique_uuid_prefix_replacements,
+    wait_cell_id,
+)
 from session_signals import (  # noqa: E402
     DiagnosticSignal,
     analyze_signals,
@@ -33,7 +40,7 @@ from runner_command_shapes import (  # noqa: E402
 
 DEFAULT_SESSIONS_ROOT = Path("/home/reggie/.codex/sessions")
 DEFAULT_OUTPUT_ROOT = Path("/home/reggie/.codex/session-diagnostics/minimax")
-REPORT_SCHEMA_VERSION = 5
+REPORT_SCHEMA_VERSION = 6
 REPORT_MAX_BYTES = 2_000_000
 REPORT_COMPLETE_MARKER = "<!-- capture-minimax-session:complete -->"
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,80}$")
@@ -173,6 +180,7 @@ class Capture:
     line_count: int = 0
     malformed_lines: int = 0
     unparsed_runner_calls: int = 0
+    canonicalized_session_prefixes: int = 0
     invocations: list[Invocation] = field(default_factory=list)
     terminals: list[Terminal] = field(default_factory=list)
     activity_timeline: list[Activity] = field(default_factory=list)
@@ -592,6 +600,27 @@ def _record_failure_markers(capture: Capture, text: str) -> None:
             capture.failure_counts[name] += 1
 
 
+def _canonicalize_activity_sessions(capture: Capture) -> None:
+    replacements = unique_uuid_prefix_replacements(
+        item.external_session for item in capture.activity_timeline
+    )
+    if not replacements:
+        return
+
+    capture.canonicalized_session_prefixes = len(replacements)
+    capture.activities = defaultdict(Counter)
+    capture.max_elapsed = {}
+    for item in capture.activity_timeline:
+        item.external_session = replacements.get(
+            item.external_session, item.external_session
+        )
+        capture.activities[item.external_session][item.event] += 1
+        capture.max_elapsed[item.external_session] = max(
+            capture.max_elapsed.get(item.external_session, 0),
+            item.elapsed_seconds,
+        )
+
+
 def capture_session(session_id: str, source_path: Path) -> Capture:
     capture = Capture(session_id=session_id, source_path=source_path)
     terminal_seen: set[tuple[object, ...]] = set()
@@ -622,7 +651,11 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
         )
 
     outputs_by_call: dict[str, tuple[str, Any]] = {}
-    for record in records:
+    output_indices_by_call: dict[str, int] = {}
+    function_outputs_by_call: dict[str, tuple[str, Any]] = {}
+    function_output_indices_by_call: dict[str, int] = {}
+    wait_calls_by_cell: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for record_index, record in enumerate(records):
         payload = record.get("payload")
         if (
             record.get("type") == "response_item"
@@ -634,9 +667,60 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
                 str(record.get("timestamp", "unknown")),
                 payload.get("output"),
             )
+            output_indices_by_call[payload["call_id"]] = record_index
+        elif (
+            record.get("type") == "response_item"
+            and isinstance(payload, dict)
+            and payload.get("type") == "function_call_output"
+            and isinstance(payload.get("call_id"), str)
+        ):
+            function_outputs_by_call[payload["call_id"]] = (
+                str(record.get("timestamp", "unknown")),
+                payload.get("output"),
+            )
+            function_output_indices_by_call[payload["call_id"]] = record_index
+        elif record.get("type") == "response_item" and isinstance(payload, dict):
+            cell_id = wait_cell_id(payload)
+            call_id = payload.get("call_id")
+            if cell_id is not None and isinstance(call_id, str):
+                wait_calls_by_cell[cell_id].append((call_id, record_index))
 
     selected_call_ids: set[str] = set()
+    selected_function_call_ids: set[str] = set()
     process_ids: set[str] = set()
+    runner_external_sessions: set[str] = set()
+
+    def attached_wait_call_ids(output: Any, source_index: int) -> set[str]:
+        attached: set[str] = set()
+        for cell_id in cell_ids_from_output(output):
+            wait_calls = wait_calls_by_cell.get(cell_id, ())
+            if len(wait_calls) != 1:
+                continue
+            wait_call_id, wait_index = wait_calls[0]
+            output_index = function_output_indices_by_call.get(wait_call_id)
+            if output_index is None or not source_index < wait_index < output_index:
+                continue
+            attached.add(wait_call_id)
+        return attached
+
+    def attach_wait_outputs(output: Any, source_index: int) -> None:
+        for wait_call_id in attached_wait_call_ids(output, source_index):
+            output_record = function_outputs_by_call[wait_call_id]
+            selected_function_call_ids.add(wait_call_id)
+            process_ids.update(_process_ids_from_output(output_record[1]))
+            runner_external_sessions.update(
+                activity_sessions_from_output(output_record[1], ACTIVITY_RE)
+            )
+
+    def candidate_wait_sessions(output: Any, source_index: int) -> set[str]:
+        return {
+            session
+            for wait_call_id in attached_wait_call_ids(output, source_index)
+            for session in activity_sessions_from_output(
+                function_outputs_by_call[wait_call_id][1], ACTIVITY_RE
+            )
+        }
+
     for record in records:
         payload = record.get("payload")
         if not (
@@ -663,6 +747,10 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
                 capture.unparsed_runner_calls += 1
                 selected_call_ids.add(call_id)
                 process_ids.update(_process_ids_from_output(output_record[1]))
+                runner_external_sessions.update(
+                    activity_sessions_from_output(output_record[1], ACTIVITY_RE)
+                )
+                attach_wait_outputs(output_record[1], output_indices_by_call[call_id])
             continue
         capture.invocations.append(invocation)
         call_id = payload.get("call_id")
@@ -671,8 +759,37 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
             output_record = outputs_by_call.get(call_id)
             if output_record is not None:
                 process_ids.update(_process_ids_from_output(output_record[1]))
+                runner_external_sessions.update(
+                    activity_sessions_from_output(output_record[1], ACTIVITY_RE)
+                )
+                attach_wait_outputs(output_record[1], output_indices_by_call[call_id])
 
-    if process_ids:
+    poll_session_universe = set(runner_external_sessions)
+    for record in records:
+        payload = record.get("payload")
+        if not (
+            record.get("type") == "response_item"
+            and isinstance(payload, dict)
+            and payload.get("type") == "custom_tool_call"
+            and payload.get("name") == "exec"
+            and isinstance(payload.get("input"), str)
+            and "tools.write_stdin" in payload["input"]
+            and isinstance(payload.get("call_id"), str)
+        ):
+            continue
+        call_id = payload["call_id"]
+        output_record = outputs_by_call.get(call_id)
+        if output_record is None:
+            continue
+        poll_session_universe.update(
+            candidate_wait_sessions(
+                output_record[1], output_indices_by_call[call_id]
+            )
+        )
+
+    changed = True
+    while changed:
+        changed = False
         for record in records:
             payload = record.get("payload")
             if not (
@@ -684,64 +801,90 @@ def capture_session(session_id: str, source_path: Path) -> Capture:
                 and "tools.write_stdin" in payload["input"]
             ):
                 continue
-            poll_ids = set(POLL_SESSION_RE.findall(payload["input"]))
-            if not poll_ids.intersection(process_ids):
-                continue
             call_id = payload.get("call_id")
-            if isinstance(call_id, str):
-                selected_call_ids.add(call_id)
-
-    for record in records:
-            timestamp = str(record.get("timestamp", "unknown"))
-            if record.get("type") == "session_meta":
-                payload = record.get("payload")
-                if isinstance(payload, dict):
-                    capture.source_cwd = _redact(str(payload.get("cwd", "unknown")), 180)
-            payload = record.get("payload")
+            if not isinstance(call_id, str) or call_id in selected_call_ids:
+                continue
+            output_record = outputs_by_call.get(call_id)
+            if output_record is None:
+                continue
+            poll_ids = set(POLL_SESSION_RE.findall(payload["input"]))
+            candidate_sessions = candidate_wait_sessions(
+                output_record[1], output_indices_by_call[call_id]
+            )
             if not (
-                record.get("type") == "response_item"
-                and isinstance(payload, dict)
-                and payload.get("type") == "custom_tool_call_output"
-                and payload.get("call_id") in selected_call_ids
+                poll_ids.intersection(process_ids)
+                or session_sets_intersect(
+                    candidate_sessions,
+                    runner_external_sessions,
+                    poll_session_universe,
+                )
             ):
                 continue
-            output = payload.get("output")
-            for text in _text_values(output):
-                for match in ACTIVITY_RE.finditer(text):
-                    elapsed = int(match.group(1))
-                    event = _redact(match.group(2), 80)
-                    external_session = _redact(match.group(3) or "unknown", 100)
-                    capture.activities[external_session][event] += 1
-                    capture.activity_timeline.append(
-                        Activity(
-                            external_session=external_session,
-                            elapsed_seconds=elapsed,
-                            event=event,
+            selected_call_ids.add(call_id)
+            changed = True
+            process_ids.update(_process_ids_from_output(output_record[1]))
+            runner_external_sessions.update(
+                activity_sessions_from_output(output_record[1], ACTIVITY_RE)
+            )
+            attach_wait_outputs(output_record[1], output_indices_by_call[call_id])
+
+    for record in records:
+        timestamp = str(record.get("timestamp", "unknown"))
+        if record.get("type") == "session_meta":
+            payload = record.get("payload")
+            if isinstance(payload, dict):
+                capture.source_cwd = _redact(str(payload.get("cwd", "unknown")), 180)
+        payload = record.get("payload")
+        if not (record.get("type") == "response_item" and isinstance(payload, dict)):
+            continue
+        is_selected_custom = (
+            payload.get("type") == "custom_tool_call_output"
+            and payload.get("call_id") in selected_call_ids
+        )
+        is_selected_function = (
+            payload.get("type") == "function_call_output"
+            and payload.get("call_id") in selected_function_call_ids
+        )
+        if not (is_selected_custom or is_selected_function):
+            continue
+        output = payload.get("output")
+        for text in _text_values(output):
+            for match in ACTIVITY_RE.finditer(text):
+                elapsed = int(match.group(1))
+                event = _redact(match.group(2), 80)
+                external_session = _redact(match.group(3) or "unknown", 100)
+                capture.activities[external_session][event] += 1
+                capture.activity_timeline.append(
+                    Activity(
+                        external_session=external_session,
+                        elapsed_seconds=elapsed,
+                        event=event,
+                    )
+                )
+                capture.max_elapsed[external_session] = max(
+                    capture.max_elapsed.get(external_session, 0), elapsed
+                )
+        for decoded in _terminal_dicts_from_selected_output(output):
+            terminal = _terminal_from_dict(timestamp, decoded)
+            if terminal is None:
+                continue
+            key = _terminal_key(terminal)
+            if key not in terminal_seen:
+                terminal_seen.add(key)
+                capture.terminals.append(terminal)
+                _record_failure_markers(
+                    capture,
+                    " ".join(
+                        (
+                            terminal.status,
+                            terminal.termination_reason,
+                            terminal.agent_status,
+                            terminal.blocker_kind,
+                            terminal.error_signature,
                         )
-                    )
-                    capture.max_elapsed[external_session] = max(
-                        capture.max_elapsed.get(external_session, 0), elapsed
-                    )
-            for decoded in _terminal_dicts_from_selected_output(output):
-                terminal = _terminal_from_dict(timestamp, decoded)
-                if terminal is None:
-                    continue
-                key = _terminal_key(terminal)
-                if key not in terminal_seen:
-                    terminal_seen.add(key)
-                    capture.terminals.append(terminal)
-                    _record_failure_markers(
-                        capture,
-                        " ".join(
-                            (
-                                terminal.status,
-                                terminal.termination_reason,
-                                terminal.agent_status,
-                                terminal.blocker_kind,
-                                terminal.error_signature,
-                            )
-                        ),
-                    )
+                    ),
+                )
+    _canonicalize_activity_sessions(capture)
     return capture
 
 
@@ -777,17 +920,28 @@ def _optimization_leads(capture: Capture) -> list[str]:
 
 
 def _diagnostic_signals(capture: Capture) -> tuple[DiagnosticSignal, ...]:
-    return analyze_signals(
-        ((item.agent, item.dialogue) for item in capture.invocations),
-        tuple(
-            (item.external_session, item.elapsed_seconds, item.event)
-            for item in capture.activity_timeline
-        ),
-        tuple(
-            (item.agent_status, item.evidence_count, item.concern_count)
-            for item in capture.terminals
-        ),
+    signals = list(
+        analyze_signals(
+            ((item.agent, item.dialogue) for item in capture.invocations),
+            tuple(
+                (item.external_session, item.elapsed_seconds, item.event)
+                for item in capture.activity_timeline
+            ),
+            tuple(
+                (item.agent_status, item.evidence_count, item.concern_count)
+                for item in capture.terminals
+            ),
+        )
     )
+    if capture.canonicalized_session_prefixes:
+        signals.append(
+            DiagnosticSignal(
+                "external_session_prefix_canonicalized",
+                capture.canonicalized_session_prefixes,
+                "unique truncated UUID prefixes merged",
+            )
+        )
+    return tuple(signals)
 
 
 def _capture_fingerprint(capture: Capture) -> str:
@@ -796,6 +950,7 @@ def _capture_fingerprint(capture: Capture) -> str:
             "session_id": capture.session_id,
             "report_schema_version": REPORT_SCHEMA_VERSION,
             "unparsed_runner_calls": capture.unparsed_runner_calls,
+            "canonicalized_session_prefixes": capture.canonicalized_session_prefixes,
             "invocations": [item.__dict__ for item in capture.invocations],
             "terminals": [item.__dict__ for item in capture.terminals],
             "activities": [item.__dict__ for item in capture.activity_timeline],

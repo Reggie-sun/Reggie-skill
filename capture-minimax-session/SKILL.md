@@ -51,6 +51,7 @@ Treat these as optimization evidence, not proof of application-code failure:
 - `long_activity_gap`: one external session had a gap of at least 60 seconds between activity events; distinguish normal reasoning/structured-output pauses from stagnation before changing timeouts.
 - `zero_terminal_evidence`: a completed terminal reported no observed evidence paths in a capture whose invocations are all dialogue-enabled; mixed captures do not guess terminal ownership.
 - `read_heavy_exploration`: at least 15 reads occurred at a `Read:Grep` ratio of 5:1 or greater; this is a search-strategy lead, not proof of inefficiency.
+- `external_session_prefix_canonicalized`: a truncated external UUID was merged into its single matching full UUID; inspect transport chunk boundaries instead of counting it as another MiniMax session.
 
 Use repeated signals across different session fingerprints to justify `sub-agents` changes. A single signal is a focused investigation lead, not an automatic authorization to change routing, permissions, timeouts, or prompts.
 
@@ -65,6 +66,8 @@ Use repeated signals across different session fingerprints to justify `sub-agent
 - Capture fingerprints intentionally ignore unrelated later JSONL growth when MiniMax invocation, activity, terminal, and failure data are unchanged.
 - Capture fingerprints include the report schema version, so a changed analysis algorithm produces a fresh report instead of reusing stale diagnostics.
 - Terminal rows come only from a schema-valid final runner envelope associated with the original invocation or its attached process polls; provider prose is not terminal truth.
+- Cell-wrapped transport output is trusted only when a top-level exact runner/poll `cell ID` marker links forward to one unique `wait` call and its later result. A subsequent poll additionally requires an attached process ID or an external session matching the selected runner chain under the same unique-prefix rule. Nested stdout markers, reused cell IDs, reversed ordering, arbitrary waits, and ambiguous session prefixes are not runner evidence.
+- A truncated external session token is canonicalized only when it is at least 24 characters and is the unique strict prefix of one full UUID in the same capture. Ambiguous prefixes remain separate.
 - `runner_context` contains only strict runner-owned identifiers. `tools_mode=explicit` lists the enforced tool surface; `tools_mode=default` means the backend default was not enumerated. Historical terminals without context render these fields as `unknown`; the capture never infers them from provider prose.
 - `concern_categories` and `evidence_categories` are closed categorical signals. Unknown historical values collapse to `other` instead of being copied verbatim.
 - Error output is reduced to allowlisted categories such as `protocol` or `evidence_incomplete`; exact error prose is never copied.

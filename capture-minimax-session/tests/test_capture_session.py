@@ -252,6 +252,677 @@ class CaptureSessionTests(unittest.TestCase):
             [(1, "result"), (1, "result")],
         )
 
+    def test_cell_wait_chain_recovers_selected_activity_and_terminal(self) -> None:
+        session_id = "01a01f31-6655-7972-9df8-605ccb483b25"
+        external_session = "0d0da7da-d575-41ba-9989-07a1f622fe89"
+        truncated_session = "0d0da7da-d575-41ba-9989-07a1f"
+        unrelated_session = "11111111-2222-4333-8444-555555555555"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+
+        def activity(elapsed: int, event: str, session: str) -> str:
+            return (
+                "[sub-agent] activity cli=minimax "
+                f"elapsed={elapsed}s event={event} session={session}"
+            )
+
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": (
+                        "Script running with cell ID 133\n"
+                        "Wall time 10.0 seconds\nOutput:\n"
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "wait-runner",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": "133"}),
+                },
+            },
+            {
+                "timestamp": "t1",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "wait-runner",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": activity(1, "thinking", truncated_session),
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "poll",
+                    "name": "exec",
+                    "input": (
+                        "const r=await tools.write_stdin({session_id:77,"
+                        'chars:""});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "poll",
+                    "output": (
+                        "Script running with cell ID 134\n"
+                        "Wall time 10.0 seconds\nOutput:\n"
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "wait-poll",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 134}),
+                },
+            },
+            {
+                "timestamp": "t2",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "wait-poll",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                activity(2, "result", external_session)
+                                + "\n"
+                                + json.dumps(terminal)
+                            ),
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "unrelated-poll",
+                    "name": "exec",
+                    "input": (
+                        "const r=await tools.write_stdin({session_id:88,"
+                        'chars:""});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "unrelated-poll",
+                    "output": (
+                        "Script running with cell ID 135\n"
+                        "Wall time 10.0 seconds\nOutput:\n"
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "wait-unrelated",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 135}),
+                },
+            },
+            {
+                "timestamp": "t3",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "wait-unrelated",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                activity(3, "result", unrelated_session)
+                                + "\n"
+                                + json.dumps(terminal)
+                            ),
+                        }
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual([item.agent for item in capture.invocations], ["explorer"])
+        self.assertEqual(
+            [(item.external_session, item.event) for item in capture.activity_timeline],
+            [(external_session, "thinking"), (external_session, "result")],
+        )
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertEqual(capture.terminals[0].agent_status, "DONE")
+        self.assertEqual(capture.canonicalized_session_prefixes, 1)
+
+    def test_nested_cell_marker_cannot_attach_unrelated_wait_terminal(self) -> None:
+        session_id = "01a01f31-6655-7972-9df8-605ccb483b25"
+        external_session = "11111111-2222-4333-8444-555555555555"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": {
+                        "output": "Script running with cell ID 133",
+                        "exit_code": 0,
+                        "wall_time_seconds": 1.0,
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "unrelated-wait",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 133}),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "unrelated-wait",
+                    "output": (
+                        "[sub-agent] activity cli=minimax elapsed=1s event=result "
+                        f"session={external_session}\n{json.dumps(terminal)}"
+                    ),
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(capture.activity_timeline, [])
+        self.assertEqual(capture.terminals, [])
+
+    def test_cell_wait_requires_unique_forward_ordered_chain(self) -> None:
+        session_id = "01a01f31-6655-7972-9df8-605ccb483b25"
+        terminal = json.dumps(
+            {
+                "cli": "minimax",
+                "status": "success",
+                "exit_code": 0,
+                "transport_exit_code": 0,
+                "cli_exit_code": 0,
+                "termination_reason": "cli_exit",
+                "agent_status": "DONE",
+            }
+        )
+        common = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": "Script running with cell ID 133",
+                },
+            },
+        ]
+
+        def wait(call_id: str) -> dict[str, object]:
+            return {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 133}),
+                },
+            }
+
+        def output(call_id: str) -> dict[str, object]:
+            return {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": terminal,
+                },
+            }
+
+        invalid_tails = (
+            [wait("wait-one"), output("wait-one"), wait("wait-two"), output("wait-two")],
+            [output("wait-one"), wait("wait-one")],
+        )
+        for tail in invalid_tails:
+            with self.subTest(tail=tail):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    rollout = Path(temp_dir) / "rollout.jsonl"
+                    rollout.write_text(
+                        "".join(json.dumps(item) + "\n" for item in common + tail),
+                        encoding="utf-8",
+                    )
+                    capture = MODULE.capture_session(session_id, rollout)
+                self.assertEqual(capture.activity_timeline, [])
+                self.assertEqual(capture.terminals, [])
+
+    def test_unique_truncated_uuid_prefix_is_canonicalized(self) -> None:
+        session_id = "01a01e34-039b-79d1-9910-ff773e5b6526"
+        full = "a144a3fa-0e2f-4d7e-8d56-aaaccb8fd9ef"
+        truncated = "a144a3fa-0e2f-4d7e-8d56-a"
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "[sub-agent] activity cli=minimax elapsed=62s "
+                                f"event=tool_result session={full}\n"
+                                "[sub-agent] activity cli=minimax elapsed=64s "
+                                f"event=thinking session={truncated}"
+                            ),
+                        }
+                    ],
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(set(capture.activities), {full})
+        self.assertEqual(
+            [item.external_session for item in capture.activity_timeline],
+            [full, full],
+        )
+        self.assertEqual(capture.canonicalized_session_prefixes, 1)
+        self.assertIn(
+            "external_session_prefix_canonicalized",
+            {signal.name for signal in MODULE._diagnostic_signals(capture)},
+        )
+
+    def test_ambiguous_truncated_uuid_prefix_remains_separate(self) -> None:
+        prefix = "12345678-1234-4234-8234-"
+        full_one = prefix + "aaaaaaaaaaaa"
+        full_two = prefix + "bbbbbbbbbbbb"
+        capture = MODULE.Capture(
+            session_id="01a01e34-039b-79d1-9910-ff773e5b6526",
+            source_path=Path("/tmp/sanitized-rollout.jsonl"),
+            activity_timeline=[
+                MODULE.Activity(prefix, 1, "thinking"),
+                MODULE.Activity(full_one, 2, "result"),
+                MODULE.Activity(full_two, 3, "result"),
+            ],
+        )
+        for item in capture.activity_timeline:
+            capture.activities[item.external_session][item.event] += 1
+            capture.max_elapsed[item.external_session] = item.elapsed_seconds
+
+        MODULE._canonicalize_activity_sessions(capture)
+
+        self.assertEqual(capture.canonicalized_session_prefixes, 0)
+        self.assertEqual(
+            [item.external_session for item in capture.activity_timeline],
+            [prefix, full_one, full_two],
+        )
+        self.assertFalse(MODULE.session_sets_intersect({prefix}, {full_one, full_two}))
+
+    def test_ambiguous_prefix_across_separate_polls_is_order_independent(self) -> None:
+        session_id = "01a01e34-039b-79d1-9910-ff773e5b6526"
+        prefix = "12345678-1234-4234-8234-"
+        full_one = prefix + "aaaaaaaaaaaa"
+        full_two = prefix + "bbbbbbbbbbbb"
+        terminal = json.dumps(
+            {
+                "cli": "minimax",
+                "status": "success",
+                "exit_code": 0,
+                "transport_exit_code": 0,
+                "cli_exit_code": 0,
+                "termination_reason": "cli_exit",
+                "agent_status": "DONE",
+            }
+        )
+
+        def envelope(cell_id: int) -> str:
+            return (
+                f"Script running with cell ID {cell_id}\n"
+                "Wall time 10.0 seconds\nOutput:\n"
+            )
+
+        def activity(session: str) -> str:
+            return (
+                "[sub-agent] activity cli=minimax elapsed=1s "
+                f"event=result session={session}"
+            )
+
+        base = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": envelope(100),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "wait-runner",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 100}),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "wait-runner",
+                    "output": activity(prefix),
+                },
+            },
+        ]
+
+        def poll(name: str, cell_id: int, process_id: int, session: str) -> list[dict[str, object]]:
+            return [
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "call_id": f"poll-{name}",
+                        "name": "exec",
+                        "input": (
+                            "const r=await tools.write_stdin({"
+                            f"session_id:{process_id},chars:\"\"}});"
+                        ),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": f"poll-{name}",
+                        "output": envelope(cell_id),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "call_id": f"wait-{name}",
+                        "name": "wait",
+                        "arguments": json.dumps({"cell_id": cell_id}),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": f"wait-{name}",
+                        "output": activity(session) + "\n" + terminal,
+                    },
+                },
+            ]
+
+        poll_blocks = (
+            poll("one", 101, 201, full_one),
+            poll("two", 102, 202, full_two),
+        )
+        for ordered_blocks in (poll_blocks, tuple(reversed(poll_blocks))):
+            with self.subTest(order=[block[0]["payload"] for block in ordered_blocks]):
+                records = base + [item for block in ordered_blocks for item in block]
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    rollout = Path(temp_dir) / "rollout.jsonl"
+                    rollout.write_text(
+                        "".join(json.dumps(item) + "\n" for item in records),
+                        encoding="utf-8",
+                    )
+                    capture = MODULE.capture_session(session_id, rollout)
+
+                self.assertEqual(capture.terminals, [])
+                self.assertEqual(
+                    [item.external_session for item in capture.activity_timeline],
+                    [prefix],
+                )
+
+    def test_direct_poll_prefix_can_attach_later_cell_poll_full_uuid(self) -> None:
+        session_id = "01a01f31-6655-7972-9df8-605ccb483b25"
+        full = "a144a3fa-0e2f-4d7e-8d56-aaaccb8fd9ef"
+        truncated = "a144a3fa-0e2f-4d7e-8d56-a"
+        terminal = {
+            "cli": "minimax",
+            "status": "success",
+            "exit_code": 0,
+            "transport_exit_code": 0,
+            "cli_exit_code": 0,
+            "termination_reason": "cli_exit",
+            "agent_status": "DONE",
+        }
+
+        def activity(session: str) -> str:
+            return (
+                "[sub-agent] activity cli=minimax elapsed=1s "
+                f"event=result session={session}"
+            )
+
+        records = [
+            {"type": "session_meta", "payload": {"id": session_id, "cwd": "/repo"}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "runner",
+                    "name": "exec",
+                    "input": (
+                        'const r=await tools.exec_command({"cmd":"python3 '
+                        '/x/run_subagent.py --agent explorer --cwd /repo '
+                        '--prompt task"});'
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "runner",
+                    "output": {
+                        "session_id": 77,
+                        "output": "started",
+                        "wall_time_seconds": 1.0,
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "direct-poll",
+                    "name": "exec",
+                    "input": 'const r=await tools.write_stdin({session_id:77,chars:""});',
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "direct-poll",
+                    "output": activity(truncated),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call",
+                    "call_id": "cell-poll",
+                    "name": "exec",
+                    "input": 'const r=await tools.write_stdin({session_id:88,chars:""});',
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "custom_tool_call_output",
+                    "call_id": "cell-poll",
+                    "output": (
+                        "Script running with cell ID 133\n"
+                        "Wall time 10.0 seconds\nOutput:\n"
+                    ),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "call_id": "wait-cell-poll",
+                    "name": "wait",
+                    "arguments": json.dumps({"cell_id": 133}),
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": "wait-cell-poll",
+                    "output": activity(full) + "\n" + json.dumps(terminal),
+                },
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            rollout = Path(temp_dir) / "rollout.jsonl"
+            rollout.write_text(
+                "".join(json.dumps(item) + "\n" for item in records),
+                encoding="utf-8",
+            )
+            capture = MODULE.capture_session(session_id, rollout)
+
+        self.assertEqual(
+            [item.external_session for item in capture.activity_timeline],
+            [full, full],
+        )
+        self.assertEqual(len(capture.terminals), 1)
+        self.assertEqual(capture.canonicalized_session_prefixes, 1)
+
     def test_dynamic_runner_command_uses_strict_framing_without_inventing_invocation_shape(self) -> None:
         session_id = "01a01979-f2da-7c00-80b2-65ee2aea9ade"
         terminal = {

@@ -114,6 +114,7 @@ def optimization_leads(signals: Iterable[DiagnosticSignal]) -> tuple[str, ...]:
         "long_activity_gap": "Distinguish normal reasoning or StructuredOutput pauses from real stagnation before tuning timeouts.",
         "zero_terminal_evidence": "Inspect whether file-level evidence was required before changing grants or prompts.",
         "read_heavy_exploration": "Compare search-first prompting and evidence quality before changing explorer routing.",
+        "external_session_prefix_canonicalized": "Inspect transport chunk boundaries when external session IDs arrive truncated.",
     }
     return tuple(
         lead_by_signal[signal.name]
