@@ -90,9 +90,12 @@ def _closed_reasons(value: object) -> list[str] | None:
 
 
 def _terminal_capture_reasons(tool_response: object) -> list[str] | None:
-    if not isinstance(tool_response, dict):
+    if isinstance(tool_response, str):
+        output = tool_response
+    elif isinstance(tool_response, dict):
+        output = tool_response.get("output")
+    else:
         return None
-    output = tool_response.get("output")
     if not isinstance(output, str) or len(output.encode("utf-8")) > MAX_TOOL_OUTPUT_BYTES:
         return None
     for line in reversed(output.splitlines()):

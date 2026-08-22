@@ -200,6 +200,39 @@ class MiniMaxProblemCaptureContractTests(unittest.TestCase):
             self.assertNotIn("result", payload)
             self.assertEqual(stat.S_IMODE(marker_path.stat().st_mode), 0o600)
 
+    def test_post_tool_hook_accepts_codex_bash_string_response(self) -> None:
+        hook = _load_module(CAPTURE_HOOK_PATH, "capture_hook_string_response_test")
+        session_id = "01a028ab-0b8f-71e2-9630-916533f7a447"
+        terminal = {
+            "status": "error",
+            "cli": "minimax",
+            "automatic_capture": {
+                "required": True,
+                "reasons": ["transport_error"],
+            },
+        }
+        event = {
+            "hook_event_name": "PostToolUse",
+            "session_id": session_id,
+            "tool_name": "Bash",
+            "tool_use_id": "tool-string-response",
+            "tool_input": {
+                "command": (
+                    "python3 /home/reggie/.codex/skills/sub-agents/scripts/"
+                    "run_subagent.py --agent explorer"
+                )
+            },
+            "tool_response": json.dumps(terminal),
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            marker = hook.process_post_tool_event(event, pending_root=Path(tmp))
+
+            self.assertIsNotNone(marker)
+            payload = json.loads(Path(marker).read_text(encoding="utf-8"))
+            self.assertEqual(payload["session_id"], session_id)
+            self.assertEqual(payload["reasons"], ["transport_error"])
+
     def test_post_tool_hook_ignores_non_runner_command_and_normal_result(self) -> None:
         hook = _load_module(CAPTURE_HOOK_PATH, "capture_hook_ignore_test")
         session_id = "01a028ab-0b8f-71e2-9630-916533f7a447"
