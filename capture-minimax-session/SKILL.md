@@ -1,6 +1,6 @@
 ---
 name: capture-minimax-session
-description: Capture a completed Codex session's external MiniMax subagent activity into a sanitized Markdown diagnostic. Use only when the user explicitly asks to record, capture, audit, summarize, or preserve MiniMax/sub-agents CLI behavior from the current session or a supplied Codex session ID for later sub-agents skill optimization.
+description: Capture a completed or stably stopped Codex session's external MiniMax subagent activity into a sanitized Markdown diagnostic. Use when the user explicitly asks to record, capture, audit, summarize, or preserve MiniMax/sub-agents CLI behavior, or automatically from the main thread when the sub-agents skill detects a probable MiniMax runner, transport, permission, protocol, evidence-gate, boundary, timeout/progress, or result-truth problem.
 ---
 
 # Capture MiniMax Session
@@ -9,11 +9,13 @@ Create a post-task diagnostic artifact from the session JSONL without copying ra
 
 ## Workflow
 
-1. Confirm the task is complete or at a stable stopping point. This skill records history; it does not complete the task or modify `sub-agents`.
+1. Confirm the relevant MiniMax dispatch is complete or at a stable stopping point. This skill records history; it does not complete the task or modify `sub-agents`. For automatic problem capture, the main-thread agent invokes this skill itself after applying the trigger rules in `sub-agents/SKILL.md`; never delegate capture to the external subagent.
 2. Resolve the session:
-   - Prefer a session ID explicitly supplied by the user.
-   - Otherwise use `CODEX_THREAD_ID`.
-   - If neither exists, stop and request the exact session ID. Do not guess from the newest file when concurrent sessions may exist.
+   - First distinguish automatic `sub-agents` problem capture from an explicit user-requested capture.
+   - Automatic mode MUST use only the current `CODEX_THREAD_ID`. Ignore historical or supplied session IDs that merely appear in the task or conversation; they are not candidates for the current abnormal dispatch.
+   - If `CODEX_THREAD_ID` is unavailable in automatic mode, report that the diagnostic could not be recorded, continue the parent task, and do not guess from the newest file when concurrent sessions may exist.
+   - Explicit capture may use the session ID explicitly supplied by the user; otherwise use `CODEX_THREAD_ID`.
+   - If neither exists during explicit capture, stop and request the exact session ID.
 3. Run:
 
    ```bash
@@ -21,6 +23,7 @@ Create a post-task diagnostic artifact from the session JSONL without copying ra
    ```
 
    `{SKILL_DIR}` is the directory containing this `SKILL.md`.
+   Invoke this script directly from the main thread. Never route capture through `run_subagent.py`, another external CLI, or a native subagent.
 4. Read the generated report and verify:
    - the source session ID and rollout path are correct;
    - MiniMax terminal truth keeps `status`, `transport_exit_code`, `cli_exit_code`, `termination_reason`, and `agent_status` separate;

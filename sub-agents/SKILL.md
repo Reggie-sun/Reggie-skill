@@ -34,6 +34,56 @@ effort, permission profile, `tools_mode`, and exposed tool names. Treat it as ru
 configuration diagnostics; it never contains prompts, command grants, provider
 prose, environment values, or credentials.
 
+## Automatic MiniMax Problem Capture
+
+The main-thread agent MUST invoke `capture-minimax-session` after a MiniMax
+dispatch reaches a stable terminal or stopping point and exposes a probable
+runner, transport, permission, protocol, evidence-gate, boundary, or progress
+problem. The parent performs this capture itself using the current
+`CODEX_THREAD_ID`; never instruct the external subagent to capture its own
+session.
+
+Capture automatically when any of these occurs:
+
+- runner `status` is `error` or `partial`;
+- `agent_status` is `PROTOCOL_ERROR`, or is `BLOCKED` with blocker,
+  termination, concern, or observed-tool evidence pointing to the runner,
+  grants, permission, protocol, evidence gate, role boundary, or progress
+  behavior;
+- termination reports timeout, stagnation, missing terminal truth, permission
+  denial, structured-output/protocol failure, or incomplete required evidence;
+- the external agent attempts an unauthorized, mutating, nested-agent, network,
+  or otherwise out-of-role tool;
+- a retry repeats without useful progress, useful edits exist without a clean
+  terminal, or parent verification shows the reported outcome is inconsistent
+  with observed files/tests/activity;
+- `DONE_WITH_CONCERNS` includes a concern about the runner, grants, exposed
+  tools, evidence collection, timeout/progress behavior, or output protocol.
+
+Do not auto-capture a normal `DONE`, an expected `NEEDS_CONTEXT` turn, or a
+`DONE_WITH_CONCERNS` whose concerns are solely about application code or task
+scope. A task-level `BLOCKED` caused only by a genuinely missing application
+dependency, unresolved product decision, unavailable task input, or a correctly
+enforced authority boundary is also not a MiniMax problem. `NEEDS_CONTEXT` is
+expected only when it contains 1-3 task-necessary
+questions that the parent can answer while preserving the same scope,
+permissions, and grants. Repeated, irrelevant, out-of-scope, or authority-
+expanding questions are a protocol/boundary problem and MUST trigger capture.
+If an expected turn later reveals a runner problem, capture at that point.
+
+Load and follow the installed `capture-minimax-session` skill, then invoke its
+sanitizer script directly against the current main-thread session. MUST NOT
+route capture through `run_subagent.py`, another external CLI, or a native
+subagent. Verify the generated report and report its path. If
+`CODEX_THREAD_ID` is unavailable during automatic capture, report the
+diagnostic blocker without guessing the newest session and continue the main
+task; do not request unrelated authority. Capture is diagnostic only: it does not authorize broader grants, a
+retry, fallback, edits to either skill, or interruption of unrelated task
+completion. Reinvoke after a later dispatch only when it adds a new problem or
+new runner evidence; stable fingerprints deduplicate unchanged captures. If
+the capture itself fails, report that failure without exposing raw rollout
+content or replacing the original subagent outcome.
+
 ## Interpreting User Requests
 
 Extract parameters from user's natural language request:
