@@ -9,11 +9,11 @@ Create a post-task diagnostic artifact from the session JSONL without copying ra
 
 ## Workflow
 
-1. Confirm the relevant MiniMax dispatch is complete or at a stable stopping point. This skill records history; it does not complete the task or modify `sub-agents`. For automatic problem capture, the main-thread agent invokes this skill itself after applying the trigger rules in `sub-agents/SKILL.md`; never delegate capture to the external subagent.
+1. Confirm the relevant MiniMax dispatch is complete or at a stable stopping point. This skill records history; it does not complete the task or modify `sub-agents`. For automatic problem capture, the installed Codex `PostToolUse` and `Stop` hooks invoke this skill's sanitizer after applying the machine trigger contract in `sub-agents/SKILL.md`; the main-thread agent reports the result. Never delegate capture to the external subagent.
 2. Resolve the session:
    - First distinguish automatic `sub-agents` problem capture from an explicit user-requested capture.
-   - Automatic mode MUST use only the current `CODEX_THREAD_ID`. Ignore historical or supplied session IDs that merely appear in the task or conversation; they are not candidates for the current abnormal dispatch.
-   - If `CODEX_THREAD_ID` is unavailable in automatic mode, report that the diagnostic could not be recorded, continue the parent task, and do not guess from the newest file when concurrent sessions may exist.
+   - Hook-backed automatic mode MUST use only the authoritative `session_id` from the Codex hook event. Prompt text, historical IDs, a child process's inherited `CODEX_THREAD_ID`, and IDs inside tool output are not candidates.
+   - On a host without a trusted hook, the prose fallback MUST use only the current main-thread `CODEX_THREAD_ID`. If it is unavailable, report that the diagnostic could not be recorded, continue the parent task, and do not guess from the newest file when concurrent sessions may exist.
    - Explicit capture may use the session ID explicitly supplied by the user; otherwise use `CODEX_THREAD_ID`.
    - If neither exists during explicit capture, stop and request the exact session ID.
 3. Run:

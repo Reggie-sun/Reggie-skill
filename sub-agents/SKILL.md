@@ -36,12 +36,25 @@ prose, environment values, or credentials.
 
 ## Automatic MiniMax Problem Capture
 
-The main-thread agent MUST invoke `capture-minimax-session` after a MiniMax
+The main-thread agent MUST ensure `capture-minimax-session` runs after a MiniMax
 dispatch reaches a stable terminal or stopping point and exposes a probable
 runner, transport, permission, protocol, evidence-gate, boundary, or progress
-problem. The parent performs this capture itself using the current
-`CODEX_THREAD_ID`; never instruct the external subagent to capture its own
-session.
+problem. On a trusted Codex-hook host, the runtime hooks below are the single
+capture owner; the parent reports their outcome and MUST NOT also perform a
+manual capture. Never instruct the external subagent to capture its own session.
+
+On Codex hosts, this requirement is runtime-backed rather than prompt-only.
+`run_subagent.py` emits a secret-free machine classification in its terminal
+JSON. The installed `PostToolUse` hook recognizes that exact runner invocation,
+uses the hook event's authoritative `session_id`, and writes a mode-`600`
+pending marker. The installed main-thread `Stop` hook atomically claims that
+marker, invokes the sanitizer after the tool result is durable in the session
+transcript, removes the claim, and requests at most one bounded continuation so
+the parent reports the diagnostic path. It does not rely on a child process's
+inherited `CODEX_THREAD_ID`. The marker contains only the authoritative session
+ID and closed reason identifiers; it never contains the prompt, result prose,
+commands, environment, or credentials. The prose rules below remain the
+fallback for hosts where Codex hooks are unavailable or not trusted.
 
 Capture automatically when any of these occurs:
 
@@ -71,13 +84,14 @@ permissions, and grants. Repeated, irrelevant, out-of-scope, or authority-
 expanding questions are a protocol/boundary problem and MUST trigger capture.
 If an expected turn later reveals a runner problem, capture at that point.
 
-Load and follow the installed `capture-minimax-session` skill, then invoke its
-sanitizer script directly against the current main-thread session. MUST NOT
-route capture through `run_subagent.py`, another external CLI, or a native
-subagent. Verify the generated report and report its path. If
-`CODEX_THREAD_ID` is unavailable during automatic capture, report the
-diagnostic blocker without guessing the newest session and continue the main
-task; do not request unrelated authority. Capture is diagnostic only: it does not authorize broader grants, a
+Only when Codex hooks are unavailable or untrusted, load and follow the
+installed `capture-minimax-session` skill and invoke its sanitizer directly
+against the current main-thread `CODEX_THREAD_ID`. This is the fallback owner,
+not a second path after a hook-backed capture. MUST NOT route capture through
+`run_subagent.py`, another external CLI, or a native subagent. Verify the
+generated report and report its path. If `CODEX_THREAD_ID` is unavailable in
+fallback mode, report the diagnostic blocker without guessing the newest
+session and continue the main task; do not request unrelated authority. Capture is diagnostic only: it does not authorize broader grants, a
 retry, fallback, edits to either skill, or interruption of unrelated task
 completion. Reinvoke after a later dispatch only when it adds a new problem or
 new runner evidence; stable fingerprints deduplicate unchanged captures. If

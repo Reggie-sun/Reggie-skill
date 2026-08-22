@@ -28,6 +28,79 @@ from _resolver import resolve_cli  # noqa: E402
 from _tdd import build_tdd_context  # noqa: E402
 
 
+_RUNNER_CONCERN_CATEGORIES = frozenset(
+    {
+        "evidence_gap",
+        "permission_or_tooling",
+        "protocol_or_output",
+        "timeout_or_performance",
+    }
+)
+_RUNNER_BLOCK_REASONS = frozenset(
+    {
+        "dialogue_protocol_error",
+        "evidence_incomplete",
+        "idle_timeout",
+        "missing_terminal_result",
+        "output_limit",
+        "permission_denial_loop",
+        "semantic_stagnation",
+        "tool_error_loop",
+    }
+)
+
+
+def _automatic_capture_reasons(cli: str, result: dict) -> tuple[str, ...]:
+    """Return closed runner-level reasons that require a MiniMax diagnostic."""
+    if cli != "minimax":
+        return ()
+
+    reasons: list[str] = []
+    status = result.get("status")
+    if status == "error":
+        reasons.append("transport_error")
+    elif status == "partial":
+        reasons.append("transport_partial")
+
+    agent_status = result.get("agent_status")
+    if agent_status == "PROTOCOL_ERROR":
+        reasons.append("protocol_or_output")
+    elif agent_status == "NEEDS_CONTEXT":
+        categories = result.get("concern_categories")
+        if isinstance(categories, list):
+            reasons.extend(
+                category
+                for category in categories
+                if category
+                in {
+                    "permission_or_tooling",
+                    "protocol_or_output",
+                    "timeout_or_performance",
+                }
+            )
+    elif agent_status == "BLOCKED":
+        if result.get("termination_reason") in _RUNNER_BLOCK_REASONS:
+            reasons.append("runner_blocked")
+        categories = result.get("concern_categories")
+        if isinstance(categories, list):
+            reasons.extend(
+                category
+                for category in categories
+                if category in {"protocol_or_output", "timeout_or_performance"}
+            )
+
+    if agent_status == "DONE_WITH_CONCERNS":
+        categories = result.get("concern_categories")
+        if isinstance(categories, list):
+            reasons.extend(
+                category
+                for category in categories
+                if category in _RUNNER_CONCERN_CATEGORIES
+            )
+
+    return tuple(dict.fromkeys(reasons))
+
+
 def _print_error(error: str, exit_code: int = 1, cli: str | None = None) -> None:
     payload = {
         "result": "",
@@ -40,6 +113,11 @@ def _print_error(error: str, exit_code: int = 1, cli: str | None = None) -> None
     }
     if cli is not None:
         payload["cli"] = cli
+    if cli == "minimax":
+        payload["automatic_capture"] = {
+            "required": True,
+            "reasons": ["transport_error"],
+        }
     print(json.dumps(payload))
 
 
@@ -170,7 +248,7 @@ def main() -> None:
             agent_timeout_ms,
         ) = load_agent(agents_dir, agent_name)
     except (FileNotFoundError, ValueError) as e:
-        _print_error(str(e))
+        _print_error(str(e), cli=args.cli)
         sys.exit(1)
 
     cli = args.cli or resolve_cli(run_agent_cli)
@@ -269,6 +347,13 @@ def main() -> None:
 
     if args.dialogue:
         result = normalize_dialogue_result(result, args.cwd)
+
+    capture_reasons = _automatic_capture_reasons(cli, result)
+    if capture_reasons:
+        result["automatic_capture"] = {
+            "required": True,
+            "reasons": list(capture_reasons),
+        }
 
     print(json.dumps(result, ensure_ascii=False))
     sys.exit(result.get("transport_exit_code", 0 if result["status"] == "success" else 1))
