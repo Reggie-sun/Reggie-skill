@@ -1,0 +1,1408 @@
+{
+  "source": "ref4",
+  "episode": 460,
+  "displayed_date": "9月20日",
+  "author": "@产品君",
+  "source_sha256": "245f0c822e8cf04f3229dfba2c68403bfc7c31b3fe17a5e295d67bb42a54c665",
+  "duration_s": 161.933333,
+  "analysed_until_s": 155.966667,
+  "media": {
+    "width": 960,
+    "height": 448,
+    "fps": 30,
+    "video_codec": "hevc",
+    "audio_codec": "aac"
+  },
+  "method": {
+    "text": "1fps burned-in subtitle extraction, RapidOCR-ONNXRuntime 1.4.4, visually corrected against sampled frames; subtitle reconstruction rather than a certified verbatim audio transcript",
+    "subtitle_and_item_boundary_resolution_s": 1,
+    "shot_detection": "FFmpeg crop=740:360:110:25, scene>0.20; candidate cuts <0.4s apart merged; contact-sheet inspection; missed content switches added from lower-score frame candidates; phone control-center transitions removed in ref4",
+    "shot_boundary_limitation": "Detected and visually sampled edit segments, not an exhaustive frame-by-frame shot census. Animated scenes and dissolves can still cause missed or extra cuts; frame candidates are on a 30fps grid.",
+    "character_count": "Each Chinese character or contiguous English/number token counts as one; punctuation excluded. cps is a subtitle-based estimate, not measured speaking speed.",
+    "fact_status": "Style reference only; source news claims, superlatives and figures have not been checked against official sources."
+  },
+  "opening": {
+    "start": 0,
+    "end": 2,
+    "sec": 2,
+    "text": "2分钟看完一周AI大事",
+    "boundary_precision": "1fps approximation"
+  },
+  "ending": {
+    "start": 155.966667,
+    "end": 155.966667,
+    "sec": 0,
+    "note": "No separate repeated opening-title outro observed; news ends with the last item."
+  },
+  "excluded_segments": [
+    {
+      "start": 2,
+      "end": 11,
+      "reason": "commentary/cartoon preamble; excluded from news-item statistics"
+    },
+    {
+      "start": 155.966667,
+      "end": 161.933333,
+      "reason": "animation-making promotion; recording ends during this segment"
+    }
+  ],
+  "shots": {
+    "count": 41,
+    "avg_s": 3.804,
+    "median_s": 3.333,
+    "min_s": 0.6,
+    "max_s": 11.0,
+    "cut_times_s": [
+      1.866667,
+      6.033333,
+      13.7,
+      16.666667,
+      20.166667,
+      21.933333,
+      28.733333,
+      30.4,
+      34.733333,
+      42.533333,
+      49.033333,
+      49.9,
+      53.2,
+      56.533333,
+      58.366667,
+      60.9,
+      64.066667,
+      65.9,
+      71.166667,
+      78.766667,
+      81.366667,
+      82.133333,
+      84.266667,
+      95.266667,
+      96.033333,
+      100.166667,
+      104.433333,
+      108.233333,
+      110.666667,
+      111.466667,
+      112.766667,
+      113.366667,
+      119.066667,
+      123.066667,
+      126.6,
+      132.0,
+      140.5,
+      145.266667,
+      148.6,
+      151.7
+    ],
+    "segments": [
+      {
+        "n": 1,
+        "start": 0,
+        "end": 1.866667,
+        "sec": 1.866667,
+        "visual": "家庭机器人与人物开场，带标题和播放器控件",
+        "boundary_method": "source_start",
+        "items": []
+      },
+      {
+        "n": 2,
+        "start": 1.866667,
+        "end": 6.033333,
+        "sec": 4.166666,
+        "visual": "卡通人物；录屏操作面板遮挡",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": []
+      },
+      {
+        "n": 3,
+        "start": 6.033333,
+        "end": 13.7,
+        "sec": 7.666667,
+        "visual": "卡通人物演讲动作",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          1
+        ]
+      },
+      {
+        "n": 4,
+        "start": 13.7,
+        "end": 16.666667,
+        "sec": 2.966667,
+        "visual": "发光装置与性能演示",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          1
+        ]
+      },
+      {
+        "n": 5,
+        "start": 16.666667,
+        "end": 20.166667,
+        "sec": 3.5,
+        "visual": "骑车鹈鹕动画",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          1,
+          2
+        ]
+      },
+      {
+        "n": 6,
+        "start": 20.166667,
+        "end": 21.933333,
+        "sec": 1.766666,
+        "visual": "手绘帆船与交互图形",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          2
+        ]
+      },
+      {
+        "n": 7,
+        "start": 21.933333,
+        "end": 28.733333,
+        "sec": 6.8,
+        "visual": "浅色机械蝴蝶交互演示",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          2,
+          3,
+          4
+        ]
+      },
+      {
+        "n": 8,
+        "start": 28.733333,
+        "end": 30.4,
+        "sec": 1.666667,
+        "visual": "深色机械蝴蝶展示",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          4
+        ]
+      },
+      {
+        "n": 9,
+        "start": 30.4,
+        "end": 34.733333,
+        "sec": 4.333333,
+        "visual": "机械蝴蝶与后续模型页面",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          4
+        ]
+      },
+      {
+        "n": 10,
+        "start": 34.733333,
+        "end": 42.533333,
+        "sec": 7.8,
+        "visual": "GPT-6 Astra 深色模型页面",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          4,
+          5
+        ]
+      },
+      {
+        "n": 11,
+        "start": 42.533333,
+        "end": 49.033333,
+        "sec": 6.5,
+        "visual": "加密电报档案与破解记录",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          5,
+          6
+        ]
+      },
+      {
+        "n": 12,
+        "start": 49.033333,
+        "end": 49.9,
+        "sec": 0.866667,
+        "visual": "加密电报页上的果蝇模拟窗口",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          6
+        ]
+      },
+      {
+        "n": 13,
+        "start": 49.9,
+        "end": 53.2,
+        "sec": 3.3,
+        "visual": "Jev 魔方决策界面",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          6,
+          7
+        ]
+      },
+      {
+        "n": 14,
+        "start": 53.2,
+        "end": 56.533333,
+        "sec": 3.333333,
+        "visual": "Jev 机器人搬方块与指标",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          7
+        ]
+      },
+      {
+        "n": 15,
+        "start": 56.533333,
+        "end": 58.366667,
+        "sec": 1.833334,
+        "visual": "Jev 与另一模型的方块游戏对比",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          7
+        ]
+      },
+      {
+        "n": 16,
+        "start": 58.366667,
+        "end": 60.9,
+        "sec": 2.533333,
+        "visual": "人物列表与有限选项任务面板",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          7
+        ]
+      },
+      {
+        "n": 17,
+        "start": 60.9,
+        "end": 64.066667,
+        "sec": 3.166667,
+        "visual": "即时战略游戏录屏",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          7
+        ]
+      },
+      {
+        "n": 18,
+        "start": 64.066667,
+        "end": 65.9,
+        "sec": 1.833333,
+        "visual": "代码或网页任务演示",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          7
+        ]
+      },
+      {
+        "n": 19,
+        "start": 65.9,
+        "end": 71.166667,
+        "sec": 5.266667,
+        "visual": "Laya 极速决策游戏演示",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          7,
+          8,
+          9
+        ]
+      },
+      {
+        "n": 20,
+        "start": 71.166667,
+        "end": 78.766667,
+        "sec": 7.6,
+        "visual": "Dream RSI 分支复盘与分数图",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          9
+        ]
+      },
+      {
+        "n": 21,
+        "start": 78.766667,
+        "end": 81.366667,
+        "sec": 2.6,
+        "visual": "Google Home 家电演示过渡",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          9,
+          10
+        ]
+      },
+      {
+        "n": 22,
+        "start": 81.366667,
+        "end": 82.133333,
+        "sec": 0.766666,
+        "visual": "厨房人物与家电",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          10
+        ]
+      },
+      {
+        "n": 23,
+        "start": 82.133333,
+        "end": 84.266667,
+        "sec": 2.133334,
+        "visual": "扫地机器人清扫谷物",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          10,
+          11
+        ]
+      },
+      {
+        "n": 24,
+        "start": 84.266667,
+        "end": 95.266667,
+        "sec": 11.0,
+        "visual": "Needle 3 层数与参数图",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          11,
+          12
+        ]
+      },
+      {
+        "n": 25,
+        "start": 95.266667,
+        "end": 96.033333,
+        "sec": 0.766666,
+        "visual": "Arrow 服装商品页面",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          12
+        ]
+      },
+      {
+        "n": 26,
+        "start": 96.033333,
+        "end": 100.166667,
+        "sec": 4.133334,
+        "visual": "Arrow 可编辑矢量路径与服装细节",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          12
+        ]
+      },
+      {
+        "n": 27,
+        "start": 100.166667,
+        "end": 104.433333,
+        "sec": 4.266666,
+        "visual": "Arrow 矢量服装成品",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          12
+        ]
+      },
+      {
+        "n": 28,
+        "start": 104.433333,
+        "end": 108.233333,
+        "sec": 3.8,
+        "visual": "Qwen 多模态能力页面",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          12,
+          13,
+          14
+        ]
+      },
+      {
+        "n": 29,
+        "start": 108.233333,
+        "end": 110.666667,
+        "sec": 2.433334,
+        "visual": "Runway 人物运动与帧率刻度",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          14
+        ]
+      },
+      {
+        "n": 30,
+        "start": 110.666667,
+        "end": 111.466667,
+        "sec": 0.8,
+        "visual": "Runway 补帧前后分屏",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          14
+        ]
+      },
+      {
+        "n": 31,
+        "start": 111.466667,
+        "end": 112.766667,
+        "sec": 1.3,
+        "visual": "Runway 舞蹈补帧对比",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          14
+        ]
+      },
+      {
+        "n": 32,
+        "start": 112.766667,
+        "end": 113.366667,
+        "sec": 0.6,
+        "visual": "Runway 人物跳跃补帧对比",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          14
+        ]
+      },
+      {
+        "n": 33,
+        "start": 113.366667,
+        "end": 119.066667,
+        "sec": 5.7,
+        "visual": "Meridian 摩托车重运镜对照",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          14,
+          15,
+          16
+        ]
+      },
+      {
+        "n": 34,
+        "start": 119.066667,
+        "end": 123.066667,
+        "sec": 4.0,
+        "visual": "Jing/DAO 放飞天灯的游戏场景",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          16
+        ]
+      },
+      {
+        "n": 35,
+        "start": 123.066667,
+        "end": 126.6,
+        "sec": 3.533333,
+        "visual": "Jing/DAO NPC 游戏场景",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          16
+        ]
+      },
+      {
+        "n": 36,
+        "start": 126.6,
+        "end": 132.0,
+        "sec": 5.4,
+        "visual": "Qwen 同传与音频时间线",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          16,
+          17
+        ]
+      },
+      {
+        "n": 37,
+        "start": 132.0,
+        "end": 140.5,
+        "sec": 8.5,
+        "visual": "Confucius4-R2T2 语音识别双屏",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          18
+        ]
+      },
+      {
+        "n": 38,
+        "start": 140.5,
+        "end": 145.266667,
+        "sec": 4.766667,
+        "visual": "FANUC 机器人读取图纸并焊接",
+        "boundary_method": "manual_visual_check_lower_scene_score",
+        "items": [
+          18,
+          19,
+          20
+        ]
+      },
+      {
+        "n": 39,
+        "start": 145.266667,
+        "end": 148.6,
+        "sec": 3.333333,
+        "visual": "脑机接口设备与数字分身屏幕",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          20
+        ]
+      },
+      {
+        "n": 40,
+        "start": 148.6,
+        "end": 151.7,
+        "sec": 3.1,
+        "visual": "数字分身与患者小窗",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          20
+        ]
+      },
+      {
+        "n": 41,
+        "start": 151.7,
+        "end": 155.966667,
+        "sec": 4.266667,
+        "visual": "数字分身动作与脑电解码标注",
+        "boundary_method": "scene_gt_0.20_merged_0.4s",
+        "items": [
+          20
+        ]
+      }
+    ]
+  },
+  "subtitle_lines": {
+    "count": 86,
+    "avg_s": 1.814,
+    "change_times_s_ocr_1fps": [
+      0.0,
+      2.0,
+      6.0,
+      7.0,
+      8.0,
+      9.0,
+      11.0,
+      14.0,
+      15.0,
+      16.0,
+      17.0,
+      19.0,
+      20.0,
+      22.0,
+      24.0,
+      25.0,
+      27.0,
+      28.0,
+      31.0,
+      33.0,
+      35.0,
+      37.0,
+      39.0,
+      41.0,
+      43.0,
+      46.0,
+      47.0,
+      48.0,
+      50.0,
+      53.0,
+      55.0,
+      57.0,
+      58.0,
+      61.0,
+      62.0,
+      63.0,
+      64.0,
+      66.0,
+      68.0,
+      69.0,
+      70.0,
+      71.0,
+      73.0,
+      76.0,
+      77.0,
+      79.0,
+      81.0,
+      83.0,
+      84.0,
+      86.0,
+      88.0,
+      89.0,
+      91.0,
+      92.0,
+      95.0,
+      98.0,
+      100.0,
+      103.0,
+      105.0,
+      107.0,
+      108.0,
+      110.0,
+      114.0,
+      116.0,
+      118.0,
+      119.0,
+      121.0,
+      122.0,
+      124.0,
+      125.0,
+      127.0,
+      128.0,
+      129.0,
+      131.0,
+      132.0,
+      135.0,
+      137.0,
+      138.0,
+      141.0,
+      142.0,
+      143.0,
+      145.0,
+      149.0,
+      150.0,
+      152.0,
+      153.0
+    ],
+    "lines": [
+      {
+        "start": 0.0,
+        "text": "2分钟看完一周AI大事",
+        "end": 2.0
+      },
+      {
+        "start": 2.0,
+        "text": "川川紧急叫停AI刹车论",
+        "end": 6.0
+      },
+      {
+        "start": 6.0,
+        "text": "AI不能减速",
+        "end": 7.0
+      },
+      {
+        "start": 7.0,
+        "text": "油门必须焊死",
+        "end": 8.0
+      },
+      {
+        "start": 8.0,
+        "text": "AI接管人类是骗局",
+        "end": 9.0
+      },
+      {
+        "start": 9.0,
+        "text": "谁喊AI减速谁就是叛徒",
+        "end": 11.0
+      },
+      {
+        "start": 11.0,
+        "text": "OpenAI下周上线「GPT-6 Sol」",
+        "end": 14.0
+      },
+      {
+        "start": 14.0,
+        "text": "代码能力反超GPT-6 Astra",
+        "end": 15.0
+      },
+      {
+        "start": 15.0,
+        "text": "速度更快",
+        "end": 16.0
+      },
+      {
+        "start": 16.0,
+        "text": "成本更低",
+        "end": 17.0
+      },
+      {
+        "start": 17.0,
+        "text": "定位是日常工作的主力模型",
+        "end": 19.0
+      },
+      {
+        "start": 19.0,
+        "text": "Claude内测「Fable 5.2」",
+        "end": 20.0
+      },
+      {
+        "start": 20.0,
+        "text": "推理能力完胜GPT-6 Astra",
+        "end": 22.0
+      },
+      {
+        "start": 22.0,
+        "text": "「Opus 5.2」同步上线",
+        "end": 24.0
+      },
+      {
+        "start": 24.0,
+        "text": "Claude家族全面升级",
+        "end": 25.0
+      },
+      {
+        "start": 25.0,
+        "text": "「Gemini 4 Pro」曝光",
+        "end": 27.0
+      },
+      {
+        "start": 27.0,
+        "text": "首搓SVG刷爆全网",
+        "end": 28.0
+      },
+      {
+        "start": 28.0,
+        "text": "核心基准测试全部拿下SOTA",
+        "end": 31.0
+      },
+      {
+        "start": 31.0,
+        "text": "AI竞争重回三傻时代",
+        "end": 33.0
+      },
+      {
+        "start": 33.0,
+        "text": "年度最强大模型之战正式开打",
+        "end": 35.0
+      },
+      {
+        "start": 35.0,
+        "text": "OpenAI下一代「Astra」模型",
+        "end": 37.0
+      },
+      {
+        "start": 37.0,
+        "text": "被爆攻克第二道千禧年难题「霍奇猜想」",
+        "end": 39.0
+      },
+      {
+        "start": 39.0,
+        "text": "OpenAI正在纠结公布时机",
+        "end": 41.0
+      },
+      {
+        "start": 41.0,
+        "text": "避免与数学界再起冲突",
+        "end": 43.0
+      },
+      {
+        "start": 43.0,
+        "text": "80年未解的加密电报被「GPT-6 Astra」破解",
+        "end": 46.0
+      },
+      {
+        "start": 46.0,
+        "text": "AI自己翻历史档案",
+        "end": 47.0
+      },
+      {
+        "start": 47.0,
+        "text": "手搓模拟器",
+        "end": 48.0
+      },
+      {
+        "start": 48.0,
+        "text": "10个小时直接通关",
+        "end": 50.0
+      },
+      {
+        "start": 50.0,
+        "text": "前OpenAI研究员推出极速决策模型「Jev」",
+        "end": 53.0
+      },
+      {
+        "start": 53.0,
+        "text": "比推理模型速度快200倍",
+        "end": 55.0
+      },
+      {
+        "start": 55.0,
+        "text": "成本降400倍",
+        "end": 57.0
+      },
+      {
+        "start": 57.0,
+        "text": "输出成本直接归零",
+        "end": 58.0
+      },
+      {
+        "start": 58.0,
+        "text": "只要是有限选项的任务都能交给它执行",
+        "end": 61.0
+      },
+      {
+        "start": 61.0,
+        "text": "比如打游戏",
+        "end": 62.0
+      },
+      {
+        "start": 62.0,
+        "text": "操作网页",
+        "end": 63.0
+      },
+      {
+        "start": 63.0,
+        "text": "执行筛选和分类",
+        "end": 64.0
+      },
+      {
+        "start": 64.0,
+        "text": "还能接入Codex干杂活",
+        "end": 66.0
+      },
+      {
+        "start": 66.0,
+        "text": "开源版极速模型「Laya」更早发布",
+        "end": 68.0
+      },
+      {
+        "start": 68.0,
+        "text": "速度更快",
+        "end": 69.0
+      },
+      {
+        "start": 69.0,
+        "text": "能力更强",
+        "end": 70.0
+      },
+      {
+        "start": 70.0,
+        "text": "2G显存就能运行",
+        "end": 71.0
+      },
+      {
+        "start": 71.0,
+        "text": "Google推出能自我进化的模型「Dream RSI」",
+        "end": 73.0
+      },
+      {
+        "start": 73.0,
+        "text": "通过做梦复盘尝试过的方案",
+        "end": 76.0
+      },
+      {
+        "start": 76.0,
+        "text": "思考当初换条路会怎样",
+        "end": 77.0
+      },
+      {
+        "start": 77.0,
+        "text": "进化速度直接翻倍",
+        "end": 79.0
+      },
+      {
+        "start": 79.0,
+        "text": "Google开放「Google Home MCP」",
+        "end": 81.0
+      },
+      {
+        "start": 81.0,
+        "text": "Codex也能读取智能家电状态",
+        "end": 83.0
+      },
+      {
+        "start": 83.0,
+        "text": "替你开灯关电视",
+        "end": 84.0
+      },
+      {
+        "start": 84.0,
+        "text": "研究员开源超小模型「Needle 3」",
+        "end": 86.0
+      },
+      {
+        "start": 86.0,
+        "text": "采用简单注意力网络架构",
+        "end": 88.0
+      },
+      {
+        "start": 88.0,
+        "text": "只有8到29MB",
+        "end": 89.0
+      },
+      {
+        "start": 89.0,
+        "text": "分类提取和工具调用",
+        "end": 91.0
+      },
+      {
+        "start": 91.0,
+        "text": "打平DeepSeek V4 Flash",
+        "end": 92.0
+      },
+      {
+        "start": 92.0,
+        "text": "手表电视智能小设备直接起飞",
+        "end": 95.0
+      },
+      {
+        "start": 95.0,
+        "text": "QuiverAI上线最强矢量图模型「Arrow 2.0」",
+        "end": 98.0
+      },
+      {
+        "start": 98.0,
+        "text": "AI自己画高精度可编辑的SVG",
+        "end": 100.0
+      },
+      {
+        "start": 100.0,
+        "text": "能用来做图标插画和设计素材",
+        "end": 103.0
+      },
+      {
+        "start": 103.0,
+        "text": "不会设计的同学狠狠码住",
+        "end": 105.0
+      },
+      {
+        "start": 105.0,
+        "text": "阿里推出多模态视频模型「Qwen3.8-Omni-Flash」",
+        "end": 107.0
+      },
+      {
+        "start": 107.0,
+        "text": "跑分接近Gemini Omni",
+        "end": 108.0
+      },
+      {
+        "start": 108.0,
+        "text": "Runway上线补帧视频模型「Enhance Frame Rate」",
+        "end": 110.0
+      },
+      {
+        "start": 110.0,
+        "text": "AI生成的糊片也能直升4K120帧",
+        "end": 114.0
+      },
+      {
+        "start": 114.0,
+        "text": "研究员开源后期视频模型「Meridian」",
+        "end": 116.0
+      },
+      {
+        "start": 116.0,
+        "text": "拍完的视频也能重新运镜",
+        "end": 118.0
+      },
+      {
+        "start": 118.0,
+        "text": "还能做子弹时间",
+        "end": 119.0
+      },
+      {
+        "start": 119.0,
+        "text": "研究员开源游戏世界模型「Jing/DAO」",
+        "end": 121.0
+      },
+      {
+        "start": 121.0,
+        "text": "用「镜」渲染画面",
+        "end": 122.0
+      },
+      {
+        "start": 122.0,
+        "text": "用「道」驱动NPC行动",
+        "end": 124.0
+      },
+      {
+        "start": 124.0,
+        "text": "就算退出游戏",
+        "end": 125.0
+      },
+      {
+        "start": 125.0,
+        "text": "虚拟世界还在运转",
+        "end": 127.0
+      },
+      {
+        "start": 127.0,
+        "text": "阿里发布同传语音模型「Qwen3.8-LiveTranslate」",
+        "end": 128.0
+      },
+      {
+        "start": 128.0,
+        "text": "边听边译",
+        "end": 129.0
+      },
+      {
+        "start": 129.0,
+        "text": "复刻你的声音讲外语",
+        "end": 131.0
+      },
+      {
+        "start": 131.0,
+        "text": "延迟只有2秒",
+        "end": 132.0
+      },
+      {
+        "start": 132.0,
+        "text": "研究员推出最强开源语音识别模型「Confucius4-R2T2」",
+        "end": 135.0
+      },
+      {
+        "start": 135.0,
+        "text": "准确率击败GPT Live",
+        "end": 137.0
+      },
+      {
+        "start": 137.0,
+        "text": "4G显存就能运行",
+        "end": 138.0
+      },
+      {
+        "start": 138.0,
+        "text": "能用来开发实时字幕会议记录",
+        "end": 141.0
+      },
+      {
+        "start": 141.0,
+        "text": "FANUC推出焊接机器人「AI Welding Agent」",
+        "end": 142.0
+      },
+      {
+        "start": 142.0,
+        "text": "它能自己读图纸",
+        "end": 143.0
+      },
+      {
+        "start": 143.0,
+        "text": "按参数要求执行电焊",
+        "end": 145.0
+      },
+      {
+        "start": 145.0,
+        "text": "AI帮助中风患者用意念控制数字分身",
+        "end": 149.0
+      },
+      {
+        "start": 149.0,
+        "text": "AI读取患者脑电波",
+        "end": 150.0
+      },
+      {
+        "start": 150.0,
+        "text": "解码成语言和动作",
+        "end": 152.0
+      },
+      {
+        "start": 152.0,
+        "text": "准确率百分百",
+        "end": 153.0
+      },
+      {
+        "start": 153.0,
+        "text": "失语失动的患者也能重新表达自己",
+        "end": 155.966667
+      }
+    ]
+  },
+  "shots_per_subtitle_line": 0.477,
+  "items": [
+    {
+      "n": 1,
+      "start": 11,
+      "end": 19,
+      "sec": 8,
+      "title": "GPT-6 Sol",
+      "chars": 35,
+      "cps": 4.38,
+      "shots": 3,
+      "content": "OpenAI下周上线「GPT-6 Sol」",
+      "result": "代码能力反超GPT-6 Astra，速度更快，成本更低，定位是日常工作的主力模型",
+      "impact": null,
+      "subtitle_transcript": "OpenAI下周上线「GPT-6 Sol」，代码能力反超GPT-6 Astra，速度更快，成本更低，定位是日常工作的主力模型。"
+    },
+    {
+      "n": 2,
+      "start": 19,
+      "end": 22,
+      "sec": 3,
+      "title": "Claude Fable 5.2",
+      "chars": 13,
+      "cps": 4.33,
+      "shots": 3,
+      "content": "Claude内测「Fable 5.2」",
+      "result": "推理能力完胜GPT-6 Astra",
+      "impact": null,
+      "subtitle_transcript": "Claude内测「Fable 5.2」，推理能力完胜GPT-6 Astra。"
+    },
+    {
+      "n": 3,
+      "start": 22,
+      "end": 25,
+      "sec": 3,
+      "title": "Opus 5.2",
+      "chars": 13,
+      "cps": 4.33,
+      "shots": 1,
+      "content": "「Opus 5.2」同步上线",
+      "result": "Claude家族全面升级",
+      "impact": null,
+      "subtitle_transcript": "「Opus 5.2」同步上线，Claude家族全面升级。"
+    },
+    {
+      "n": 4,
+      "start": 25,
+      "end": 35,
+      "sec": 10,
+      "title": "Gemini 4 Pro",
+      "chars": 45,
+      "cps": 4.5,
+      "shots": 4,
+      "content": "「Gemini 4 Pro」曝光",
+      "result": "首搓SVG刷爆全网，核心基准测试全部拿下SOTA",
+      "impact": "AI竞争重回三傻时代，年度最强大模型之战正式开打",
+      "subtitle_transcript": "「Gemini 4 Pro」曝光，首搓SVG刷爆全网，核心基准测试全部拿下SOTA，AI竞争重回三傻时代，年度最强大模型之战正式开打。"
+    },
+    {
+      "n": 5,
+      "start": 35,
+      "end": 43,
+      "sec": 8,
+      "title": "下一代 Astra 与数学猜想",
+      "chars": 42,
+      "cps": 5.25,
+      "shots": 2,
+      "content": "OpenAI下一代「Astra」模型",
+      "result": "被爆攻克第二道千禧年难题「霍奇猜想」，OpenAI正在纠结公布时机，避免与数学界再起冲突",
+      "impact": null,
+      "subtitle_transcript": "OpenAI下一代「Astra」模型，被爆攻克第二道千禧年难题「霍奇猜想」，OpenAI正在纠结公布时机，避免与数学界再起冲突。"
+    },
+    {
+      "n": 6,
+      "start": 43,
+      "end": 50,
+      "sec": 7,
+      "title": "GPT-6 Astra 破解加密电报",
+      "chars": 35,
+      "cps": 5.0,
+      "shots": 3,
+      "content": "80年未解的加密电报被「GPT-6 Astra」破解",
+      "result": "AI自己翻历史档案，手搓模拟器，10个小时直接通关",
+      "impact": null,
+      "subtitle_transcript": "80年未解的加密电报被「GPT-6 Astra」破解，AI自己翻历史档案，手搓模拟器，10个小时直接通关。"
+    },
+    {
+      "n": 7,
+      "start": 50,
+      "end": 66,
+      "sec": 16,
+      "title": "Jev",
+      "chars": 78,
+      "cps": 4.88,
+      "shots": 7,
+      "content": "前OpenAI研究员推出极速决策模型「Jev」",
+      "result": "比推理模型速度快200倍，成本降400倍，输出成本直接归零，只要是有限选项的任务都能交给它执行，比如打游戏，操作网页，执行筛选和分类，还能接入Codex干杂活",
+      "impact": null,
+      "subtitle_transcript": "前OpenAI研究员推出极速决策模型「Jev」，比推理模型速度快200倍，成本降400倍，输出成本直接归零，只要是有限选项的任务都能交给它执行，比如打游戏，操作网页，执行筛选和分类，还能接入Codex干杂活。"
+    },
+    {
+      "n": 8,
+      "start": 66,
+      "end": 71,
+      "sec": 5,
+      "title": "Laya",
+      "chars": 27,
+      "cps": 5.4,
+      "shots": 1,
+      "content": "开源版极速模型「Laya」更早发布",
+      "result": "速度更快，能力更强，2G显存就能运行",
+      "impact": null,
+      "subtitle_transcript": "开源版极速模型「Laya」更早发布，速度更快，能力更强，2G显存就能运行。"
+    },
+    {
+      "n": 9,
+      "start": 71,
+      "end": 79,
+      "sec": 8,
+      "title": "Dream RSI",
+      "chars": 43,
+      "cps": 5.38,
+      "shots": 3,
+      "content": "Google推出能自我进化的模型「Dream RSI」",
+      "result": "通过做梦复盘尝试过的方案，思考当初换条路会怎样，进化速度直接翻倍",
+      "impact": null,
+      "subtitle_transcript": "Google推出能自我进化的模型「Dream RSI」，通过做梦复盘尝试过的方案，思考当初换条路会怎样，进化速度直接翻倍。"
+    },
+    {
+      "n": 10,
+      "start": 79,
+      "end": 84,
+      "sec": 5,
+      "title": "Google Home MCP",
+      "chars": 24,
+      "cps": 4.8,
+      "shots": 3,
+      "content": "Google开放「Google Home MCP」",
+      "result": "Codex也能读取智能家电状态，替你开灯关电视",
+      "impact": null,
+      "subtitle_transcript": "Google开放「Google Home MCP」，Codex也能读取智能家电状态，替你开灯关电视。"
+    },
+    {
+      "n": 11,
+      "start": 84,
+      "end": 95,
+      "sec": 11,
+      "title": "Needle 3",
+      "chars": 54,
+      "cps": 4.91,
+      "shots": 2,
+      "content": "研究员开源超小模型「Needle 3」",
+      "result": "采用简单注意力网络架构，只有8到29MB，分类提取和工具调用，打平DeepSeek V4 Flash",
+      "impact": "手表电视智能小设备直接起飞",
+      "subtitle_transcript": "研究员开源超小模型「Needle 3」，采用简单注意力网络架构，只有8到29MB，分类提取和工具调用，打平DeepSeek V4 Flash，手表电视智能小设备直接起飞。"
+    },
+    {
+      "n": 12,
+      "start": 95,
+      "end": 105,
+      "sec": 10,
+      "title": "Arrow 2.0",
+      "chars": 48,
+      "cps": 4.8,
+      "shots": 5,
+      "content": "QuiverAI上线最强矢量图模型「Arrow 2.0」",
+      "result": "AI自己画高精度可编辑的SVG，能用来做图标插画和设计素材",
+      "impact": "不会设计的同学狠狠码住",
+      "subtitle_transcript": "QuiverAI上线最强矢量图模型「Arrow 2.0」，AI自己画高精度可编辑的SVG，能用来做图标插画和设计素材，不会设计的同学狠狠码住。"
+    },
+    {
+      "n": 13,
+      "start": 105,
+      "end": 108,
+      "sec": 3,
+      "title": "Qwen3.8-Omni-Flash",
+      "chars": 18,
+      "cps": 6.0,
+      "shots": 1,
+      "content": "阿里推出多模态视频模型「Qwen3.8-Omni-Flash」",
+      "result": "跑分接近Gemini Omni",
+      "impact": null,
+      "subtitle_transcript": "阿里推出多模态视频模型「Qwen3.8-Omni-Flash」，跑分接近Gemini Omni。"
+    },
+    {
+      "n": 14,
+      "start": 108,
+      "end": 114,
+      "sec": 6,
+      "title": "Enhance Frame Rate",
+      "chars": 24,
+      "cps": 4.0,
+      "shots": 6,
+      "content": "Runway上线补帧视频模型「Enhance Frame Rate」",
+      "result": "AI生成的糊片也能直升4K120帧",
+      "impact": null,
+      "subtitle_transcript": "Runway上线补帧视频模型「Enhance Frame Rate」，AI生成的糊片也能直升4K120帧。"
+    },
+    {
+      "n": 15,
+      "start": 114,
+      "end": 119,
+      "sec": 5,
+      "title": "Meridian",
+      "chars": 30,
+      "cps": 6.0,
+      "shots": 1,
+      "content": "研究员开源后期视频模型「Meridian」",
+      "result": "拍完的视频也能重新运镜，还能做子弹时间",
+      "impact": null,
+      "subtitle_transcript": "研究员开源后期视频模型「Meridian」，拍完的视频也能重新运镜，还能做子弹时间。"
+    },
+    {
+      "n": 16,
+      "start": 119,
+      "end": 127,
+      "sec": 8,
+      "title": "Jing/DAO",
+      "chars": 39,
+      "cps": 4.88,
+      "shots": 4,
+      "content": "研究员开源游戏世界模型「Jing/DAO」",
+      "result": "用「镜」渲染画面，用「道」驱动NPC行动，就算退出游戏，虚拟世界还在运转",
+      "impact": null,
+      "subtitle_transcript": "研究员开源游戏世界模型「Jing/DAO」，用「镜」渲染画面，用「道」驱动NPC行动，就算退出游戏，虚拟世界还在运转。"
+    },
+    {
+      "n": 17,
+      "start": 127,
+      "end": 132,
+      "sec": 5,
+      "title": "Qwen3.8-LiveTranslate",
+      "chars": 30,
+      "cps": 6.0,
+      "shots": 1,
+      "content": "阿里发布同传语音模型「Qwen3.8-LiveTranslate」",
+      "result": "边听边译，复刻你的声音讲外语，延迟只有2秒",
+      "impact": null,
+      "subtitle_transcript": "阿里发布同传语音模型「Qwen3.8-LiveTranslate」，边听边译，复刻你的声音讲外语，延迟只有2秒。"
+    },
+    {
+      "n": 18,
+      "start": 132,
+      "end": 141,
+      "sec": 9,
+      "title": "Confucius4-R2T2",
+      "chars": 43,
+      "cps": 4.78,
+      "shots": 2,
+      "content": "研究员推出最强开源语音识别模型「Confucius4-R2T2」",
+      "result": "准确率击败GPT Live，4G显存就能运行，能用来开发实时字幕会议记录",
+      "impact": null,
+      "subtitle_transcript": "研究员推出最强开源语音识别模型「Confucius4-R2T2」，准确率击败GPT Live，4G显存就能运行，能用来开发实时字幕会议记录。"
+    },
+    {
+      "n": 19,
+      "start": 141,
+      "end": 145,
+      "sec": 4,
+      "title": "AI Welding Agent",
+      "chars": 27,
+      "cps": 6.75,
+      "shots": 1,
+      "content": "FANUC推出焊接机器人「AI Welding Agent」",
+      "result": "它能自己读图纸，按参数要求执行电焊",
+      "impact": null,
+      "subtitle_transcript": "FANUC推出焊接机器人「AI Welding Agent」，它能自己读图纸，按参数要求执行电焊。"
+    },
+    {
+      "n": 20,
+      "start": 145,
+      "end": 155.966667,
+      "sec": 10.966667,
+      "title": "脑机接口与数字分身",
+      "chars": 53,
+      "cps": 4.83,
+      "shots": 4,
+      "content": "AI帮助中风患者用意念控制数字分身",
+      "result": "AI读取患者脑电波，解码成语言和动作，准确率百分百",
+      "impact": "失语失动的患者也能重新表达自己",
+      "subtitle_transcript": "AI帮助中风患者用意念控制数字分身，AI读取患者脑电波，解码成语言和动作，准确率百分百，失语失动的患者也能重新表达自己。"
+    }
+  ],
+  "item_sec": {
+    "avg": 7.248,
+    "min": 3,
+    "max": 16
+  },
+  "subtitle_cps_overall": 4.974,
+  "narration_cps_overall": null,
+  "speech": {
+    "word_gap_max_s": null,
+    "word_gaps_over_0.3s": null,
+    "asr_status": "video-mcp Whisper small transcription timed out; no derived ASR timing used",
+    "note": "No word-level speech alignment; captions and background music cannot establish silence or word-gap measurements."
+  },
+  "observations": {
+    "impact_items": 4,
+    "topic_grouping": "Separate named model releases counted separately; Gemini Argon third-party results kept in the same item. Commentary and promotion excluded.",
+    "visual_style": "Product/demo clips, UI, comparison panels and occasional human shots; single bottom subtitle; no persistent news-item number badge observed.",
+    "source_artifacts": "Both videos include black sidebars, a floating accessibility button and intermittent player controls; ref4 also contains a phone control-center overlay."
+  },
+  "text_caveats": [
+    "27s 原字幕写“首搓SVG刷爆全网”，按可见字幕保留。",
+    "156s onward is a promotion, not a news item or a finished editorial outro."
+  ],
+  "measurement_scope": {
+    "shots_and_subtitles": {
+      "start": 0,
+      "end": 155.966667,
+      "includes_opening": true,
+      "includes_commentary": true
+    },
+    "news_items": {
+      "start": 11,
+      "end": 155.966667,
+      "excludes_commentary_and_promotion": true
+    }
+  }
+}
