@@ -75,6 +75,7 @@ description: '为「奇点来信」制作“每天一个AI神器”：按请求�
 
 - **默认横屏 16:9，1920×1080，30fps**，延续既有选择；只有明确要求竖屏时改为 1080×1920。名称保留以免破坏现有调用，不因名称含 vertical 自动改变比例。
 - 默认音色沿用已确认的豆包“温暖阿虎 2.0”（`zh_male_wennuanahu_uranus_bigtts`）、`speech_rate +25`，前提是当前服务与凭据实际可用。按当前官方接口调用，不写死个人机器密钥路径、不打印密钥。无法使用时说明；换音色/语速先提供试听，已有批准则不重复确认。同一片不混音色，不靠后期加速硬塞台词。
+- 凭据由执行脚本在进程内依次查找：环境变量 `VOLCENGINE_TTS_API_KEY`、`VOLCENGINE_TTS_API_KEY_FILE` 指定的文件、用户配置目录下的 `volcengine/tts-api-key`（配置目录优先 `XDG_CONFIG_HOME`，未设置时为 `~/.config`；文件存纯 Key，权限 `600`）。不使用 `cat`、文件读取工具或调试日志展示 Key，不写入 Skill、工程或 Git。已有终端未继承环境变量时仍须检查文件位置，不能只查环境变量便断言缺少凭据。确实缺失或服务失败时报告原因，继续可完成的素材与剪辑工作；未经用户同意不改用 edge-tts 或其他音色。
 - 豆包默认使用**语音合成2.0字符版**：`POST https://openspeech.bytedance.com/api/v3/tts/unidirectional`；请求头为 `X-Api-Key`（从已有安全凭据配置读取）、`X-Api-Resource-Id: seed-tts-2.0`、`X-Api-Request-Id`（每次请求的随机 UUID）。请求体使用 `req_params.text`、`req_params.speaker: zh_male_wennuanahu_uranus_bigtts`、`req_params.audio_params.speech_rate: 25`，输出格式可用 `mp3`。接口或权限变化先核对[官方 HTTP 文档](https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http?lang=zh)；计费资源说明见[官方资源 ID 说明](https://docs.volcengine.com/docs/DoubaoVoice/WebSocketBidirectionalStreaming-V3?lang=zh)。本条只固定接入参数，不触发额外试音调用。
 - 以真实操作、官方动态演示和有明确意义的原创动画为主体。静态结果如修复照片/PPT可以留足观看时间；不要只给截图加推拉就称为动态演示，也不要把视频做成文字卡片幻灯片。
 - 手机能看清关键区域；不要裁断控件、数字或汉字。竖屏另留 App 遮挡安全区。只保留一层底部字幕、必要短标签和证据标识，无常驻大标题条；镜头切换服务理解，不机械两秒一切。
